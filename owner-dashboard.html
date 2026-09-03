@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>لوحة صاحب المنصة | شام لينك</title>
+    <link rel="stylesheet" href="dashboard.css" />
+  </head>
+  <body data-mode="owner">
+    <header>
+      <div class="header-inner">
+        <div>
+          <h1>لوحة صاحب المنصة</h1>
+          <p>الوكالات والموظفون وسجلات الحوالات</p>
+        </div>
+        <a class="home-link" href="index.html">الرئيسية</a>
+      </div>
+    </header>
+    <main class="container">
+      <div class="notice">
+        هذه نسخة تشغيل أولية. قفل الصفحة على صاحب المنصة فقط سيُفعّل مع تسجيل
+        الدخول وقاعدة البيانات.
+      </div>
+      <section class="stats" id="stats"></section>
+      <section class="panel" id="agenciesSection">
+        <h2>الوكالات</h2>
+        <div class="agency-list" id="agencyList"></div>
+      </section>
+      <section class="panel">
+        <h2>البحث عن موظف</h2>
+        <input
+          id="employeeSearch"
+          type="search"
+          placeholder="اكتب اسم الموظف أو EMP-ID أو رقم الجوال"
+        />
+        <div
+          class="employee-list"
+          id="employeeList"
+          style="margin-top: 16px"
+        ></div>
+      </section>
+      <section class="panel employee-detail" id="employeeDetail"></section>
+    </main>
+    <script src="dashboard.js"></script>
+  </body>
+</html>
