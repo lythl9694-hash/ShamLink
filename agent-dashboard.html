@@ -13,7 +13,9 @@
           <h1>لوحة الوكيل</h1>
           <p id="activeAgency">اختر الوكالة لعرض بياناتها</p>
         </div>
-        <a class="home-link" href="index.html">الرئيسية</a>
+        <button class="home-link" id="logoutButton" type="button">
+          تسجيل الخروج
+        </button>
       </div>
     </header>
     <main class="container">
@@ -26,6 +28,19 @@
         <div class="agency-picker"><select id="agencyPicker"></select></div>
       </section>
       <section class="stats" id="stats"></section>
+      <section class="panel">
+        <h2>دعوة موظف جديد</h2>
+        <p class="meta">
+          أنشئ رابط دعوة وأرسله للموظف. تنتهي صلاحيته بعد 72 ساعة ويُستخدم مرة
+          واحدة.
+        </p>
+        <button type="button" id="createInvite">إنشاء رابط دعوة</button>
+        <div id="inviteResult" class="notice" hidden></div>
+      </section>
+      <section class="panel">
+        <h2>طلبات الموظفين</h2>
+        <div class="employee-list" id="pendingEmployees"></div>
+      </section>
       <section class="panel">
         <h2>موظفو الوكالة</h2>
         <input
@@ -42,5 +57,6 @@
       <section class="panel employee-detail" id="employeeDetail"></section>
     </main>
     <script src="dashboard.js"></script>
+    <script src="admin-accounts.js"></script>
   </body>
 </html>
