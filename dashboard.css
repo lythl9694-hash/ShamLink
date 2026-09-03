@@ -93,6 +93,19 @@ button {
   font: inherit;
 }
 
+label {
+  display: block;
+  margin: 13px 0 6px;
+  font-weight: bold;
+}
+
+.send-code-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
 input,
 select {
   width: 100%;
@@ -220,7 +233,8 @@ button {
   }
 
   .two-columns,
-  .agency-picker {
+  .agency-picker,
+  .send-code-actions {
     grid-template-columns: 1fr;
   }
 
