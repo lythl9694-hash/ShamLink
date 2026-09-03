@@ -631,6 +631,33 @@
         return registry[normalizedIdentity];
       }
 
+      function saveAgencyProfile(id, name) {
+        const agencies = JSON.parse(
+          localStorage.getItem("shamlink_agency_profiles") || "{}",
+        );
+        agencies[id] = { id: id, name: name };
+        localStorage.setItem(
+          "shamlink_agency_profiles",
+          JSON.stringify(agencies),
+        );
+      }
+
+      function saveEmployeeProfile(id, name, phone, agencyId) {
+        const employees = JSON.parse(
+          localStorage.getItem("shamlink_employee_profiles") || "{}",
+        );
+        employees[id] = {
+          id: id,
+          name: name,
+          phone: phone || employees[id]?.phone || "",
+          agencyId: agencyId || employees[id]?.agencyId || "",
+        };
+        localStorage.setItem(
+          "shamlink_employee_profiles",
+          JSON.stringify(employees),
+        );
+      }
+
       function resizeLogo(file) {
         return new Promise(function (resolve, reject) {
           const reader = new FileReader();
@@ -872,6 +899,13 @@
           createdByPhone,
           "EMP",
         );
+        saveAgencyProfile(sourceAgencyId, source);
+        saveEmployeeProfile(
+          creatorEmployeeId,
+          createdBy,
+          createdByPhone,
+          sourceAgencyId,
+        );
 
         const agencyLogos = getAgencyLogos();
         let agencyLogo = agencyLogos[source] || "";
@@ -1076,6 +1110,21 @@
           recipientId: transfer.recipientId,
           date: transfer.deliveredAt,
         });
+
+        const agencies = JSON.parse(
+          localStorage.getItem("shamlink_agency_profiles") || "{}",
+        );
+        const destinationAgency = Object.values(agencies).find(
+          (agency) =>
+            String(agency.name).trim().toLowerCase() ===
+            String(transfer.destination).trim().toLowerCase(),
+        );
+        saveEmployeeProfile(
+          transfer.employeeId,
+          transfer.deliveredBy,
+          "",
+          destinationAgency?.id || "",
+        );
 
         saveTransfers();
         renderTransfers(searchInput.value);
