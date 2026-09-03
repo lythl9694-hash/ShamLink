@@ -791,6 +791,9 @@
               "</small>" +
               (!isDelivered
                 ? '<div class="owner-code-panel"><h4>📨 إرسال الكود للمستلم</h4>' +
+                  '<div>كود الاستلام الحالي للموظف:</div><div class="owner-secret-code">' +
+                  escapeHtml(transfer.smsCode) +
+                  "</div>" +
                   (codeWasSent
                     ? "<div>آخر إرسال: " +
                       escapeHtml(
@@ -954,7 +957,9 @@
           "</strong><br>التاريخ: " +
           escapeHtml(transfer.date) +
           "</div>" +
-          '<div class="sms-message">📱 كود الاستلام سري ولا يظهر في الإشعار. تبدأ مدة صلاحيته عند إرساله للمستلم، ومدتها ' +
+          '<div class="sms-message">📱 كود الاستلام للموظف: <strong class="owner-secret-code">' +
+          smsCode +
+          "</strong><br>لا يظهر الكود في صورة الإشعار. تبدأ مدة صلاحيته عند إرساله للمستلم، ومدتها " +
           getSmsValidityHours() +
           " ساعة، ويسمح بثلاث محاولات فقط.</div>" +
           '<button class="receipt-button" type="button" data-action="download-receipt" data-code="' +
