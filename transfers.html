@@ -269,6 +269,17 @@
         color: #777;
         text-align: center;
       }
+
+      .agency-logo-preview {
+        display: block;
+        width: 82px;
+        height: 82px;
+        margin: 8px auto 14px;
+        border: 1px solid #d1d5db;
+        border-radius: 50%;
+        object-fit: contain;
+        background: #fff;
+      }
     </style>
   </head>
 
@@ -325,14 +336,46 @@
             اختر المبلغ والعملة لعرض العمولة تلقائياً.
           </div>
 
-          <label for="source">مصدر الحوالة</label>
-          <input id="source" type="text" placeholder="الوكالة أو المدينة" />
+          <label for="source">الوكالة المرسلة</label>
+          <input
+            id="source"
+            type="text"
+            placeholder="اسم الوكالة المرسلة"
+            required
+          />
 
-          <label for="destination">الوجهة / وكالة التسليم</label>
+          <label for="agencyLogo">
+            شعار الوكالة
+            <span class="optional">(اختياري، يُحفظ باسم الوكالة)</span>
+          </label>
+          <input
+            id="agencyLogo"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+          />
+
+          <label for="createdBy">اسم الموظف منشئ الحوالة</label>
+          <input
+            id="createdBy"
+            type="text"
+            placeholder="الاسم الكامل للموظف"
+            required
+          />
+
+          <label for="createdByPhone">رقم جوال الموظف منشئ الحوالة</label>
+          <input
+            id="createdByPhone"
+            type="tel"
+            placeholder="رقم جوال الموظف"
+            required
+          />
+
+          <label for="destination">وكالة التسليم</label>
           <input
             id="destination"
             type="text"
-            placeholder="المدينة أو الوكالة المستلمة"
+            placeholder="اسم الوكالة المستلمة"
+            required
           />
 
           <label for="deliveryAddress">
@@ -381,6 +424,7 @@
       const searchInput = document.getElementById("search");
       const amountInput = document.getElementById("amount");
       const currencyInput = document.getElementById("currency");
+      const agencyLogoInput = document.getElementById("agencyLogo");
       const commissionPreview = document.getElementById("commissionPreview");
 
       const defaultCommissionRates = { USD: 0, SYP: 0, TRY: 0, EUR: 0 };
@@ -562,6 +606,79 @@
         localStorage.setItem("shamlink_transfers", JSON.stringify(transfers));
       }
 
+      function getAgencyLogos() {
+        return JSON.parse(
+          localStorage.getItem("shamlink_agency_logos") || "{}",
+        );
+      }
+
+      function createUniqueId(prefix, registry) {
+        let id;
+        const usedIds = Object.values(registry);
+        do {
+          id = prefix + "-" + Math.floor(100000 + Math.random() * 900000);
+        } while (usedIds.includes(id));
+        return id;
+      }
+
+      function getOrCreateRegisteredId(storageKey, identity, prefix) {
+        const registry = JSON.parse(localStorage.getItem(storageKey) || "{}");
+        const normalizedIdentity = String(identity).trim().toLowerCase();
+        if (!registry[normalizedIdentity]) {
+          registry[normalizedIdentity] = createUniqueId(prefix, registry);
+          localStorage.setItem(storageKey, JSON.stringify(registry));
+        }
+        return registry[normalizedIdentity];
+      }
+
+      function resizeLogo(file) {
+        return new Promise(function (resolve, reject) {
+          const reader = new FileReader();
+          reader.onerror = function () {
+            reject(new Error("تعذر قراءة ملف الشعار."));
+          };
+          reader.onload = function () {
+            const image = new Image();
+            image.onerror = function () {
+              reject(new Error("ملف الشعار غير صالح."));
+            };
+            image.onload = function () {
+              const size = 320;
+              const canvas = document.createElement("canvas");
+              canvas.width = size;
+              canvas.height = size;
+              const context = canvas.getContext("2d");
+              context.fillStyle = "#ffffff";
+              context.fillRect(0, 0, size, size);
+              const ratio = Math.min(size / image.width, size / image.height);
+              const width = image.width * ratio;
+              const height = image.height * ratio;
+              context.drawImage(
+                image,
+                (size - width) / 2,
+                (size - height) / 2,
+                width,
+                height,
+              );
+              resolve(canvas.toDataURL("image/jpeg", 0.88));
+            };
+            image.src = reader.result;
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      function loadImage(source) {
+        return new Promise(function (resolve, reject) {
+          const image = new Image();
+          image.onload = function () {
+            resolve(image);
+          };
+          image.onerror = reject;
+          image.src = source;
+        });
+      }
+
       if (migratedSmsData) saveTransfers();
 
       function isSmsExpired(transfer) {
@@ -655,6 +772,15 @@
               "الوجهة: " +
               escapeHtml(transfer.destination || "غير محددة") +
               "<br>" +
+              "أنشأ الحوالة: " +
+              escapeHtml(transfer.createdBy || "غير مسجل") +
+              " — " +
+              escapeHtml(transfer.createdByPhone || "رقم غير مسجل") +
+              " — " +
+              escapeHtml(transfer.creatorEmployeeId || "ID غير مسجل") +
+              "<br>معرّف الوكالة: " +
+              escapeHtml(transfer.sourceAgencyId || "غير مسجل") +
+              "<br>" +
               '<span class="status ' +
               (isDelivered ? "delivered" : "") +
               '">الحالة: ' +
@@ -710,7 +836,7 @@
           });
       }
 
-      form.addEventListener("submit", function (event) {
+      form.addEventListener("submit", async function (event) {
         event.preventDefault();
 
         const sender = document.getElementById("sender").value.trim();
@@ -725,11 +851,42 @@
 
         const commissionResult = calculateCommission(amount, currency);
 
-        const source =
-          document.getElementById("source").value.trim() || "غير محدد";
+        const source = document.getElementById("source").value.trim();
 
-        const destination =
-          document.getElementById("destination").value.trim() || "غير محددة";
+        const createdBy = document.getElementById("createdBy").value.trim();
+
+        const createdByPhone = document
+          .getElementById("createdByPhone")
+          .value.trim();
+
+        const sourceAgencyId = getOrCreateRegisteredId(
+          "shamlink_agency_ids",
+          source,
+          "AG",
+        );
+        const creatorEmployeeId = getOrCreateRegisteredId(
+          "shamlink_employee_ids",
+          createdByPhone,
+          "EMP",
+        );
+
+        const agencyLogos = getAgencyLogos();
+        let agencyLogo = agencyLogos[source] || "";
+        if (agencyLogoInput.files[0]) {
+          try {
+            agencyLogo = await resizeLogo(agencyLogoInput.files[0]);
+            agencyLogos[source] = agencyLogo;
+            localStorage.setItem(
+              "shamlink_agency_logos",
+              JSON.stringify(agencyLogos),
+            );
+          } catch (error) {
+            alert(error.message);
+            return;
+          }
+        }
+
+        const destination = document.getElementById("destination").value.trim();
 
         const deliveryAddress = document
           .getElementById("deliveryAddress")
@@ -753,6 +910,11 @@
           commission: commissionResult.commission,
           total: commissionResult.total,
           source: source,
+          agencyLogo: agencyLogo,
+          createdBy: createdBy,
+          createdByPhone: createdByPhone,
+          creatorEmployeeId: creatorEmployeeId,
+          sourceAgencyId: sourceAgencyId,
           destination: destination,
           deliveryAddress: deliveryAddress,
           notes: notes,
@@ -771,7 +933,13 @@
         notice.style.display = "block";
 
         notice.innerHTML =
-          '<div class="receipt-card"><h3>إشعار حوالة | شام لينك</h3>' +
+          '<div class="receipt-card">' +
+          (agencyLogo
+            ? '<img class="agency-logo-preview" src="' +
+              agencyLogo +
+              '" alt="شعار الوكالة">'
+            : "") +
+          "<h3>إشعار حوالة | شام لينك</h3>" +
           "تم إنشاء الحوالة بنجاح ✅<br>" +
           "رقم الحوالة: <strong>" +
           transferCode +
@@ -965,7 +1133,7 @@
           "sms:" + transfer.phone + "?body=" + encodeURIComponent(message);
       }
 
-      function downloadReceipt(transferCode) {
+      async function downloadReceipt(transferCode) {
         const transfer = transfers.find(
           (item) => String(item.code) === String(transferCode),
         );
@@ -996,21 +1164,52 @@
         context.direction = "rtl";
         context.textAlign = "right";
 
-        context.strokeStyle = "#07875f";
-        context.lineWidth = 12;
-        context.beginPath();
-        context.arc(1450, 105, 58, 0, Math.PI * 2);
-        context.stroke();
-        context.fillStyle = "#07875f";
-        context.font = "bold 34px Arial";
-        context.textAlign = "center";
-        context.fillText("SL", 1450, 118);
+        if (transfer.agencyLogo) {
+          try {
+            const agencyLogo = await loadImage(transfer.agencyLogo);
+            context.save();
+            context.beginPath();
+            context.arc(1450, 105, 62, 0, Math.PI * 2);
+            context.clip();
+            context.drawImage(agencyLogo, 1388, 43, 124, 124);
+            context.restore();
+            context.strokeStyle = "#07875f";
+            context.lineWidth = 4;
+            context.beginPath();
+            context.arc(1450, 105, 62, 0, Math.PI * 2);
+            context.stroke();
+          } catch (error) {
+            transfer.agencyLogo = "";
+          }
+        }
+        if (!transfer.agencyLogo) {
+          context.strokeStyle = "#07875f";
+          context.lineWidth = 12;
+          context.beginPath();
+          context.arc(1450, 105, 58, 0, Math.PI * 2);
+          context.stroke();
+          context.fillStyle = "#07875f";
+          context.font = "bold 34px Arial";
+          context.textAlign = "center";
+          context.fillText("SL", 1450, 118);
+        }
         context.textAlign = "right";
-        context.font = "bold 48px Arial";
-        context.fillText("شام لينك", 1365, 95);
+        context.fillStyle = "#07875f";
+        context.font = "bold 42px Arial";
+        context.fillText(
+          transfer.agencyLogo ? transfer.source : "شام لينك",
+          1365,
+          95,
+        );
         context.fillStyle = "#64748b";
-        context.font = "25px Arial";
-        context.fillText("إشعار حوالة مالية", 1365, 138);
+        context.font = "23px Arial";
+        context.fillText(
+          transfer.agencyLogo
+            ? "إشعار حوالة مالية • شام لينك"
+            : "إشعار حوالة مالية",
+          1365,
+          138,
+        );
 
         context.fillStyle = "#111827";
         context.font = "30px Arial";
@@ -1052,7 +1251,13 @@
           context.fillText(line, rightX, currentY);
         }
 
-        drawField("المصدر", transfer.source, 1080, 245, 380);
+        drawField(
+          "المصدر • " + (transfer.sourceAgencyId || "وكالة غير معرّفة"),
+          transfer.source,
+          1080,
+          245,
+          380,
+        );
         drawField("الوجهة", transfer.destination || "غير محددة", 590, 245, 380);
         drawField("التاريخ", transfer.date, 80, 245, 400);
 
@@ -1093,6 +1298,18 @@
         context.fillStyle = "#111827";
         context.font = "bold 30px Arial";
         context.fillText("عنوان التسليم", 1480, 735);
+        context.fillStyle = "#64748b";
+        context.font = "24px Arial";
+        context.fillText(
+          "الموظف: " +
+            (transfer.createdBy || "غير مسجل") +
+            " • " +
+            (transfer.createdByPhone || "رقم غير مسجل") +
+            " • " +
+            (transfer.creatorEmployeeId || "ID غير مسجل"),
+          780,
+          735,
+        );
         context.font = "28px Arial";
         context.fillStyle = "#374151";
         drawWrappedText(
