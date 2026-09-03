@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>إعدادات العمولة | شام لينك</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #f4f7f6;
+        color: #1f2937;
+      }
+      header {
+        background: #07865f;
+        color: white;
+        text-align: center;
+        padding: 25px 15px;
+      }
+      header h1 {
+        margin: 0 0 8px;
+      }
+      header p {
+        margin: 0;
+      }
+      .container {
+        max-width: 700px;
+        margin: auto;
+        padding: 20px;
+      }
+      .back {
+        display: inline-block;
+        margin-bottom: 15px;
+        color: #07865f;
+        text-decoration: none;
+        font-weight: bold;
+      }
+      .card {
+        background: white;
+        padding: 22px;
+        border-radius: 14px;
+        box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
+      }
+      h2 {
+        margin-top: 0;
+        color: #07865f;
+      }
+      .hint {
+        color: #64748b;
+        line-height: 1.7;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 150px;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 0;
+        border-bottom: 1px solid #e5e7eb;
+      }
+      label {
+        font-weight: bold;
+      }
+      input {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        font-size: 16px;
+      }
+      button {
+        width: 100%;
+        margin-top: 22px;
+        padding: 14px;
+        border: 0;
+        border-radius: 8px;
+        background: #07865f;
+        color: white;
+        font-size: 17px;
+        cursor: pointer;
+      }
+      .notice {
+        display: none;
+        margin-top: 16px;
+        padding: 13px;
+        border-radius: 8px;
+        background: #e7f7f1;
+        color: #056747;
+        text-align: center;
+      }
+      @media (max-width: 520px) {
+        .row {
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>إعدادات العمولة</h1>
+      <p>خاص بصاحب المنصة</p>
+    </header>
+    <main class="container">
+      <a class="back" href="index.html">← العودة للرئيسية</a>
+      <section class="card">
+        <h2>نسبة عمولة التحويل</h2>
+        <p class="hint">
+          حدد النسبة المئوية لكل عملة. تُحسب العمولة تلقائياً عند إنشاء أي حوالة
+          جديدة.
+        </p>
+        <form id="commissionForm">
+          <div class="row">
+            <label for="USD">الدولار الأمريكي USD</label
+            ><input
+              id="USD"
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+            />
+          </div>
+          <div class="row">
+            <label for="SYP">الليرة السورية SYP</label
+            ><input
+              id="SYP"
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+            />
+          </div>
+          <div class="row">
+            <label for="TRY">الليرة التركية TRY</label
+            ><input
+              id="TRY"
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+            />
+          </div>
+          <div class="row">
+            <label for="EUR">اليورو EUR</label
+            ><input
+              id="EUR"
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+            />
+          </div>
+          <button type="submit">حفظ نسب العمولة</button>
+        </form>
+        <div class="notice" id="notice">تم حفظ نسب العمولة بنجاح ✅</div>
+      </section>
+    </main>
+    <script>
+      const currencies = ["USD", "SYP", "TRY", "EUR"];
+      const form = document.getElementById("commissionForm");
+      const notice = document.getElementById("notice");
+      const savedRates =
+        JSON.parse(localStorage.getItem("shamlink_commission_rates")) || {};
+      currencies.forEach((currency) => {
+        document.getElementById(currency).value = Number(
+          savedRates[currency] || 0,
+        );
+      });
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const rates = {};
+        currencies.forEach((currency) => {
+          rates[currency] = Math.max(
+            0,
+            Number(document.getElementById(currency).value || 0),
+          );
+        });
+        localStorage.setItem(
+          "shamlink_commission_rates",
+          JSON.stringify(rates),
+        );
+        notice.style.display = "block";
+      });
+    </script>
+  </body>
+</html>
