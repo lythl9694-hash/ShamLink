@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>تسجيل الدخول | شام لينك</title>
+    <link rel="stylesheet" href="dashboard.css" />
+  </head>
+  <body>
+    <header>
+      <div class="header-inner">
+        <div>
+          <h1>تسجيل الدخول</h1>
+          <p>شام لينك</p>
+        </div>
+        <a class="home-link" href="index.html">الرئيسية</a>
+      </div>
+    </header>
+    <main class="container" style="max-width: 620px">
+      <section class="panel" id="loginPanel">
+        <h2>الدخول إلى حسابك</h2>
+        <form id="loginForm">
+          <label for="loginPhone">رقم الجوال</label>
+          <input
+            id="loginPhone"
+            name="phone"
+            type="tel"
+            required
+            autocomplete="username"
+          />
+          <label for="loginPassword">كلمة المرور</label>
+          <input
+            id="loginPassword"
+            name="password"
+            type="password"
+            minlength="8"
+            required
+            autocomplete="current-password"
+          />
+          <button type="submit" style="width: 100%; margin-top: 18px">
+            تسجيل الدخول
+          </button>
+        </form>
+        <p id="loginMessage" class="meta"></p>
+        <p>ليس لديك حساب؟ <a href="register.html">إنشاء حساب</a></p>
+      </section>
+      <section class="panel" id="setupPanel" hidden>
+        <h2>تأسيس حساب صاحب المنصة</h2>
+        <p class="meta">
+          يظهر هذا النموذج مرة واحدة فقط عند تشغيل قاعدة البيانات لأول مرة.
+        </p>
+        <form id="setupForm">
+          <label>رمز تأسيس المنصة</label
+          ><input name="setupToken" type="password" required />
+          <label>اسم صاحب المنصة</label><input name="name" required />
+          <label>رقم الجوال</label><input name="phone" type="tel" required />
+          <label>كلمة المرور</label
+          ><input name="password" type="password" minlength="8" required />
+          <button type="submit" style="width: 100%; margin-top: 18px">
+            إنشاء حساب المالك
+          </button>
+        </form>
+        <p id="setupMessage" class="meta"></p>
+      </section>
+    </main>
+    <script src="account.js"></script>
+  </body>
+</html>
