@@ -157,6 +157,43 @@
         font-weight: bold;
       }
 
+      .status.delivered {
+        color: #07875f;
+      }
+
+      .delivery-button {
+        margin-top: 14px;
+        background: #2563eb;
+      }
+
+      .delivery-form {
+        display: none;
+        margin-top: 14px;
+        padding: 15px;
+        border: 1px solid #bfdbfe;
+        border-radius: 10px;
+        background: #eff6ff;
+      }
+
+      .delivery-form label:first-child {
+        margin-top: 0;
+      }
+
+      .delivery-error {
+        display: none;
+        margin-top: 10px;
+        color: #b91c1c;
+        font-weight: bold;
+      }
+
+      .delivery-details {
+        margin-top: 10px;
+        padding: 12px;
+        border-radius: 8px;
+        background: #e7f7f1;
+        color: #056747;
+      }
+
       .empty {
         color: #777;
         text-align: center;
@@ -306,6 +343,15 @@
         localStorage.setItem("shamlink_transfers", JSON.stringify(transfers));
       }
 
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
       function renderTransfers(searchText = "") {
         const text = searchText.trim().toLowerCase();
 
@@ -339,19 +385,20 @@
             item.className = "transfer-item";
 
             const senderName = transfer.sender ? transfer.sender : "غير مذكور";
+            const isDelivered = transfer.status === "تم التسليم";
 
             item.innerHTML =
               '<span class="transfer-number">رقم الحوالة: ' +
-              transfer.code +
+              escapeHtml(transfer.code) +
               "</span><br>" +
               "اسم المرسل: " +
-              senderName +
+              escapeHtml(senderName) +
               "<br>" +
               "اسم المستلم: " +
-              transfer.receiver +
+              escapeHtml(transfer.receiver) +
               "<br>" +
               "رقم الجوال: " +
-              transfer.phone +
+              escapeHtml(transfer.phone) +
               "<br>" +
               "المبلغ: " +
               transfer.amount +
@@ -371,17 +418,35 @@
               transfer.currency +
               "<br>" +
               "المصدر: " +
-              transfer.source +
+              escapeHtml(transfer.source) +
               "<br>" +
               '<span class="sms-code">كود SMS: ' +
-              transfer.smsCode +
+              escapeHtml(transfer.smsCode) +
               "</span><br>" +
-              '<span class="status">الحالة: ' +
+              '<span class="status ' +
+              (isDelivered ? "delivered" : "") +
+              '">الحالة: ' +
               (transfer.status || "قيد الانتظار") +
               "</span><br>" +
               "<small>" +
-              transfer.date +
-              "</small>";
+              escapeHtml(transfer.date) +
+              "</small>" +
+              (isDelivered
+                ? '<div class="delivery-details">✅ سلّمها الموظف: <strong>' +
+                  escapeHtml(transfer.deliveredBy) +
+                  "</strong><br>رقم الموظف: " +
+                  escapeHtml(transfer.employeeId) +
+                  "<br>رقم هوية المستلم: " +
+                  escapeHtml(transfer.recipientId) +
+                  "<br>وقت التسليم: " +
+                  escapeHtml(transfer.deliveredAt) +
+                  "</div>"
+                : '<button class="delivery-button" type="button" data-action="open-delivery" data-code="' +
+                  escapeHtml(transfer.code) +
+                  '">تسليم الحوالة</button>' +
+                  '<form class="delivery-form" data-code="' +
+                  escapeHtml(transfer.code) +
+                  '"><label>كود SMS الذي قدّمه المستلم</label><input name="smsCode" inputmode="numeric" maxlength="4" required placeholder="أدخل الكود المكوّن من 4 أرقام"><label>اسم الموظف الذي سلّم الحوالة</label><input name="employeeName" required placeholder="الاسم الكامل"><label>رقم الموظف</label><input name="employeeId" required placeholder="مثال: EMP-001"><label>رقم هوية المستلم</label><input name="recipientId" required placeholder="هوية، إقامة أو جواز سفر"><button type="submit">تأكيد التسليم</button><div class="delivery-error">كود SMS غير صحيح</div></form>');
 
             transfersList.appendChild(item);
           });
@@ -470,6 +535,50 @@
       });
 
       searchInput.addEventListener("input", function () {
+        renderTransfers(searchInput.value);
+      });
+
+      transfersList.addEventListener("click", function (event) {
+        const button = event.target.closest('[data-action="open-delivery"]');
+        if (!button) return;
+
+        const deliveryForm = transfersList.querySelector(
+          '.delivery-form[data-code="' + button.dataset.code + '"]',
+        );
+        deliveryForm.style.display =
+          deliveryForm.style.display === "block" ? "none" : "block";
+      });
+
+      transfersList.addEventListener("submit", function (event) {
+        const deliveryForm = event.target.closest(".delivery-form");
+        if (!deliveryForm) return;
+        event.preventDefault();
+
+        const transfer = transfers.find(
+          (item) => String(item.code) === deliveryForm.dataset.code,
+        );
+        const enteredCode = deliveryForm.elements.smsCode.value.trim();
+
+        if (!transfer || enteredCode !== String(transfer.smsCode)) {
+          deliveryForm.querySelector(".delivery-error").style.display = "block";
+          return;
+        }
+
+        transfer.status = "تم التسليم";
+        transfer.deliveredBy = deliveryForm.elements.employeeName.value.trim();
+        transfer.employeeId = deliveryForm.elements.employeeId.value.trim();
+        transfer.recipientId = deliveryForm.elements.recipientId.value.trim();
+        transfer.deliveredAt = new Date().toLocaleString("ar");
+        transfer.auditLog = transfer.auditLog || [];
+        transfer.auditLog.push({
+          action: "تسليم الحوالة",
+          employeeName: transfer.deliveredBy,
+          employeeId: transfer.employeeId,
+          recipientId: transfer.recipientId,
+          date: transfer.deliveredAt,
+        });
+
+        saveTransfers();
         renderTransfers(searchInput.value);
       });
 
