@@ -194,6 +194,32 @@
         color: #056747;
       }
 
+      .receipt-card {
+        margin-top: 16px;
+        padding: 18px;
+        border: 1px solid #b8e4d4;
+        border-radius: 12px;
+        background: white;
+        text-align: right;
+      }
+
+      .receipt-card h3 {
+        margin: 0 0 12px;
+        color: #07875f;
+        text-align: center;
+      }
+
+      .receipt-button {
+        margin-top: 12px;
+        background: #374151;
+      }
+
+      .code-warning {
+        margin-top: 10px;
+        color: #b45309;
+        font-weight: bold;
+      }
+
       .empty {
         color: #777;
         text-align: center;
@@ -277,7 +303,7 @@
           <input
             id="search"
             type="text"
-            placeholder="الاسم، رقم الجوال، رقم الحوالة أو كود SMS"
+            placeholder="الاسم، رقم الجوال أو رقم الحوالة"
           />
         </div>
 
@@ -296,6 +322,13 @@
       const commissionPreview = document.getElementById("commissionPreview");
 
       const defaultCommissionRates = { USD: 0, SYP: 0, TRY: 0, EUR: 0 };
+
+      function getSmsValidityHours() {
+        return Math.max(
+          1,
+          Number(localStorage.getItem("shamlink_sms_validity_hours") || 24),
+        );
+      }
 
       function getCommissionRates() {
         return {
@@ -339,8 +372,27 @@
       let transfers =
         JSON.parse(localStorage.getItem("shamlink_transfers")) || [];
 
+      let migratedSmsData = false;
+      transfers.forEach(function (transfer) {
+        if (!transfer.smsExpiresAt) {
+          transfer.smsExpiresAt =
+            Date.now() + getSmsValidityHours() * 60 * 60 * 1000;
+          migratedSmsData = true;
+        }
+        if (typeof transfer.smsAttempts !== "number") {
+          transfer.smsAttempts = 0;
+          migratedSmsData = true;
+        }
+      });
+
       function saveTransfers() {
         localStorage.setItem("shamlink_transfers", JSON.stringify(transfers));
+      }
+
+      if (migratedSmsData) saveTransfers();
+
+      function isSmsExpired(transfer) {
+        return Date.now() > Number(transfer.smsExpiresAt || 0);
       }
 
       function escapeHtml(value) {
@@ -361,7 +413,6 @@
             transfer.receiver,
             transfer.phone,
             transfer.code,
-            transfer.smsCode,
           ]
             .join(" ")
             .toLowerCase();
@@ -386,6 +437,10 @@
 
             const senderName = transfer.sender ? transfer.sender : "غير مذكور";
             const isDelivered = transfer.status === "تم التسليم";
+            const codeExpired = !isDelivered && isSmsExpired(transfer);
+            const codeLocked =
+              !isDelivered &&
+              (transfer.smsLocked || Number(transfer.smsAttempts || 0) >= 3);
 
             item.innerHTML =
               '<span class="transfer-number">رقم الحوالة: ' +
@@ -420,9 +475,6 @@
               "المصدر: " +
               escapeHtml(transfer.source) +
               "<br>" +
-              '<span class="sms-code">كود SMS: ' +
-              escapeHtml(transfer.smsCode) +
-              "</span><br>" +
               '<span class="status ' +
               (isDelivered ? "delivered" : "") +
               '">الحالة: ' +
@@ -441,12 +493,19 @@
                   "<br>وقت التسليم: " +
                   escapeHtml(transfer.deliveredAt) +
                   "</div>"
-                : '<button class="delivery-button" type="button" data-action="open-delivery" data-code="' +
-                  escapeHtml(transfer.code) +
-                  '">تسليم الحوالة</button>' +
-                  '<form class="delivery-form" data-code="' +
-                  escapeHtml(transfer.code) +
-                  '"><label>كود SMS الذي قدّمه المستلم</label><input name="smsCode" inputmode="numeric" maxlength="4" required placeholder="أدخل الكود المكوّن من 4 أرقام"><label>اسم الموظف الذي سلّم الحوالة</label><input name="employeeName" required placeholder="الاسم الكامل"><label>رقم الموظف</label><input name="employeeId" required placeholder="مثال: EMP-001"><label>رقم هوية المستلم</label><input name="recipientId" required placeholder="هوية، إقامة أو جواز سفر"><button type="submit">تأكيد التسليم</button><div class="delivery-error">كود SMS غير صحيح</div></form>');
+                : codeExpired
+                  ? '<div class="code-warning">انتهت صلاحية كود الاستلام</div>'
+                  : codeLocked
+                    ? '<div class="code-warning">تم إيقاف التحقق بعد 3 محاولات خاطئة</div>'
+                    : '<button class="delivery-button" type="button" data-action="open-delivery" data-code="' +
+                      escapeHtml(transfer.code) +
+                      '">تسليم الحوالة</button>' +
+                      '<form class="delivery-form" data-code="' +
+                      escapeHtml(transfer.code) +
+                      '"><label>كود SMS الذي قدّمه المستلم</label><input name="smsCode" inputmode="numeric" maxlength="4" required placeholder="أدخل الكود المكوّن من 4 أرقام"><label>اسم الموظف الذي سلّم الحوالة</label><input name="employeeName" required placeholder="الاسم الكامل"><label>رقم الموظف</label><input name="employeeId" required placeholder="مثال: EMP-001"><label>رقم هوية المستلم</label><input name="recipientId" required placeholder="هوية، إقامة أو جواز سفر"><button type="submit">تأكيد التسليم</button><div class="delivery-error"></div></form>') +
+              '<button class="receipt-button" type="button" data-action="download-receipt" data-code="' +
+              escapeHtml(transfer.code) +
+              '">تنزيل الإشعار كصورة</button>';
 
             transfersList.appendChild(item);
           });
@@ -491,42 +550,44 @@
           notes: notes,
           status: "قيد الانتظار",
           date: new Date().toLocaleString("ar"),
+          smsExpiresAt: Date.now() + getSmsValidityHours() * 60 * 60 * 1000,
+          smsAttempts: 0,
+          smsLocked: false,
         };
 
         transfers.push(transfer);
         saveTransfers();
 
-        const smsMessage =
-          "شام لينك: لديك حوالة بقيمة " +
-          amount +
-          " " +
-          currency +
-          ". العمولة: " +
-          commissionResult.commission.toFixed(2) +
-          " " +
-          currency +
-          ". الإجمالي: " +
-          commissionResult.total.toFixed(2) +
-          " " +
-          currency +
-          ". كود الاستلام: " +
-          smsCode +
-          ". رقم الحوالة: " +
-          transferCode;
-
         notice.style.display = "block";
 
         notice.innerHTML =
-          "تم إنشاء الحوالة بنجاح ✅<br><br>" +
+          '<div class="receipt-card"><h3>إشعار حوالة | شام لينك</h3>' +
+          "تم إنشاء الحوالة بنجاح ✅<br>" +
           "رقم الحوالة: <strong>" +
           transferCode +
-          "</strong><br>" +
-          "كود SMS: <strong>" +
-          smsCode +
-          "</strong>" +
-          '<div class="sms-message">📱 رسالة SMS<br>' +
-          smsMessage +
-          "</div>";
+          "</strong><br>المستلم: " +
+          escapeHtml(receiver) +
+          "<br>المبلغ: " +
+          Number(amount).toFixed(2) +
+          " " +
+          currency +
+          "<br>العمولة: " +
+          commissionResult.commission.toFixed(2) +
+          " " +
+          currency +
+          "<br>الإجمالي: <strong>" +
+          commissionResult.total.toFixed(2) +
+          " " +
+          currency +
+          "</strong><br>التاريخ: " +
+          escapeHtml(transfer.date) +
+          "</div>" +
+          '<div class="sms-message">📱 كود الاستلام سري ولا يظهر في الإشعار. مدة صلاحيته ' +
+          getSmsValidityHours() +
+          " ساعة، ويسمح بثلاث محاولات فقط.</div>" +
+          '<button class="receipt-button" type="button" data-action="download-receipt" data-code="' +
+          transferCode +
+          '">تنزيل الإشعار كصورة</button>';
 
         form.reset();
         updateCommissionPreview();
@@ -538,7 +599,15 @@
         renderTransfers(searchInput.value);
       });
 
-      transfersList.addEventListener("click", function (event) {
+      document.addEventListener("click", function (event) {
+        const receiptButton = event.target.closest(
+          '[data-action="download-receipt"]',
+        );
+        if (receiptButton) {
+          downloadReceipt(receiptButton.dataset.code);
+          return;
+        }
+
         const button = event.target.closest('[data-action="open-delivery"]');
         if (!button) return;
 
@@ -559,8 +628,34 @@
         );
         const enteredCode = deliveryForm.elements.smsCode.value.trim();
 
-        if (!transfer || enteredCode !== String(transfer.smsCode)) {
-          deliveryForm.querySelector(".delivery-error").style.display = "block";
+        if (!transfer) return;
+
+        if (isSmsExpired(transfer)) {
+          renderTransfers(searchInput.value);
+          return;
+        }
+
+        if (enteredCode !== String(transfer.smsCode)) {
+          transfer.smsAttempts = Number(transfer.smsAttempts || 0) + 1;
+          const remainingAttempts = Math.max(0, 3 - transfer.smsAttempts);
+          transfer.auditLog = transfer.auditLog || [];
+          transfer.auditLog.push({
+            action: "محاولة تسليم فاشلة",
+            date: new Date().toLocaleString("ar"),
+          });
+
+          if (remainingAttempts === 0) {
+            transfer.smsLocked = true;
+            saveTransfers();
+            renderTransfers(searchInput.value);
+            return;
+          }
+
+          saveTransfers();
+          const error = deliveryForm.querySelector(".delivery-error");
+          error.textContent =
+            "كود غير صحيح. المحاولات المتبقية: " + remainingAttempts;
+          error.style.display = "block";
           return;
         }
 
@@ -569,6 +664,7 @@
         transfer.employeeId = deliveryForm.elements.employeeId.value.trim();
         transfer.recipientId = deliveryForm.elements.recipientId.value.trim();
         transfer.deliveredAt = new Date().toLocaleString("ar");
+        transfer.smsAttempts = 0;
         transfer.auditLog = transfer.auditLog || [];
         transfer.auditLog.push({
           action: "تسليم الحوالة",
@@ -581,6 +677,81 @@
         saveTransfers();
         renderTransfers(searchInput.value);
       });
+
+      function downloadReceipt(transferCode) {
+        const transfer = transfers.find(
+          (item) => String(item.code) === String(transferCode),
+        );
+        if (!transfer) return;
+
+        const canvas = document.createElement("canvas");
+        canvas.width = 1080;
+        canvas.height = 1350;
+        const context = canvas.getContext("2d");
+
+        context.fillStyle = "#f4f7f6";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = "#07875f";
+        context.fillRect(0, 0, canvas.width, 230);
+        context.direction = "rtl";
+        context.textAlign = "center";
+        context.fillStyle = "#ffffff";
+        context.font = "bold 72px Arial";
+        context.fillText("شام لينك", 540, 105);
+        context.font = "32px Arial";
+        context.fillText("إشعار حوالة مالية", 540, 170);
+
+        context.fillStyle = "#ffffff";
+        context.fillRect(70, 280, 940, 900);
+        context.textAlign = "right";
+        context.fillStyle = "#111827";
+        context.font = "36px Arial";
+
+        const senderName = transfer.sender || "غير مذكور";
+        const lines = [
+          "رقم الحوالة: " + transfer.code,
+          "اسم المرسل: " + senderName,
+          "اسم المستلم: " + transfer.receiver,
+          "المبلغ: " +
+            Number(transfer.amount).toFixed(2) +
+            " " +
+            transfer.currency,
+          "العمولة: " +
+            Number(transfer.commission || 0).toFixed(2) +
+            " " +
+            transfer.currency,
+          "الإجمالي: " +
+            Number(transfer.total || transfer.amount).toFixed(2) +
+            " " +
+            transfer.currency,
+          "المصدر: " + transfer.source,
+          "الحالة: " + (transfer.status || "قيد الانتظار"),
+          "تاريخ الإنشاء: " + transfer.date,
+        ];
+
+        if (transfer.status === "تم التسليم") {
+          lines.push("سلّمها الموظف: " + transfer.deliveredBy);
+          lines.push("وقت التسليم: " + transfer.deliveredAt);
+        }
+
+        lines.forEach(function (line, index) {
+          context.fillText(line, 940, 370 + index * 76);
+        });
+
+        context.textAlign = "center";
+        context.fillStyle = "#64748b";
+        context.font = "28px Arial";
+        context.fillText(
+          "هذا الإشعار لا يحتوي على كود الاستلام السري",
+          540,
+          1250,
+        );
+
+        const link = document.createElement("a");
+        link.download = "ShamLink-" + transfer.code + ".png";
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      }
 
       amountInput.addEventListener("input", updateCommissionPreview);
       currencyInput.addEventListener("change", updateCommissionPreview);
