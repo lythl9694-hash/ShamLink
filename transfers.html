@@ -1332,18 +1332,6 @@
         context.fillStyle = "#111827";
         context.font = "bold 30px Arial";
         context.fillText("عنوان التسليم", 1480, 735);
-        context.fillStyle = "#64748b";
-        context.font = "24px Arial";
-        context.fillText(
-          "الموظف: " +
-            (transfer.createdBy || "غير مسجل") +
-            " • " +
-            (transfer.createdByPhone || "رقم غير مسجل") +
-            " • " +
-            (transfer.creatorEmployeeId || "ID غير مسجل"),
-          780,
-          735,
-        );
         context.font = "28px Arial";
         context.fillStyle = "#374151";
         drawWrappedText(
