@@ -13,7 +13,9 @@
           <h1>لوحة صاحب المنصة</h1>
           <p>الوكالات والموظفون وسجلات الحوالات</p>
         </div>
-        <a class="home-link" href="index.html">الرئيسية</a>
+        <button class="home-link" id="logoutButton" type="button">
+          تسجيل الخروج
+        </button>
       </div>
     </header>
     <main class="container">
@@ -22,6 +24,13 @@
         الدخول وقاعدة البيانات.
       </div>
       <section class="stats" id="stats"></section>
+      <section class="panel">
+        <h2>طلبات الوكلاء</h2>
+        <p class="meta">
+          راجع الطلب، أدخل اسم الوكالة، ثم وافق ليحصل الحساب على صلاحيات الوكيل.
+        </p>
+        <div class="employee-list" id="pendingAgents"></div>
+      </section>
       <section class="panel" id="agenciesSection">
         <h2>الوكالات</h2>
         <div class="agency-list" id="agencyList"></div>
@@ -42,5 +51,6 @@
       <section class="panel employee-detail" id="employeeDetail"></section>
     </main>
     <script src="dashboard.js"></script>
+    <script src="admin-accounts.js"></script>
   </body>
 </html>
