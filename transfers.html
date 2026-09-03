@@ -283,6 +283,23 @@
           <label for="source">مصدر الحوالة</label>
           <input id="source" type="text" placeholder="الوكالة أو المدينة" />
 
+          <label for="destination">الوجهة / وكالة التسليم</label>
+          <input
+            id="destination"
+            type="text"
+            placeholder="المدينة أو الوكالة المستلمة"
+          />
+
+          <label for="deliveryAddress">
+            عنوان التسليم
+            <span class="optional">(اختياري)</span>
+          </label>
+          <input
+            id="deliveryAddress"
+            type="text"
+            placeholder="عنوان وكالة أو نقطة التسليم"
+          />
+
           <label for="notes">
             ملاحظات
             <span class="optional">(اختياري)</span>
@@ -475,6 +492,9 @@
               "المصدر: " +
               escapeHtml(transfer.source) +
               "<br>" +
+              "الوجهة: " +
+              escapeHtml(transfer.destination || "غير محددة") +
+              "<br>" +
               '<span class="status ' +
               (isDelivered ? "delivered" : "") +
               '">الحالة: ' +
@@ -529,6 +549,13 @@
         const source =
           document.getElementById("source").value.trim() || "غير محدد";
 
+        const destination =
+          document.getElementById("destination").value.trim() || "غير محددة";
+
+        const deliveryAddress = document
+          .getElementById("deliveryAddress")
+          .value.trim();
+
         const notes = document.getElementById("notes").value.trim();
 
         const transferCode = Math.floor(100000 + Math.random() * 900000);
@@ -547,6 +574,8 @@
           commission: commissionResult.commission,
           total: commissionResult.total,
           source: source,
+          destination: destination,
+          deliveryAddress: deliveryAddress,
           notes: notes,
           status: "قيد الانتظار",
           date: new Date().toLocaleString("ar"),
@@ -685,66 +714,165 @@
         if (!transfer) return;
 
         const canvas = document.createElement("canvas");
-        canvas.width = 1080;
-        canvas.height = 1350;
+        canvas.width = 1600;
+        canvas.height = 1100;
         const context = canvas.getContext("2d");
 
-        context.fillStyle = "#f4f7f6";
+        context.fillStyle = "#ffffff";
         context.fillRect(0, 0, canvas.width, canvas.height);
+
         context.fillStyle = "#07875f";
-        context.fillRect(0, 0, canvas.width, 230);
+        context.fillRect(0, 0, canvas.width, 18);
+
+        context.globalAlpha = 0.035;
+        context.fillStyle = "#07875f";
+        for (let x = 70; x < 1550; x += 42) {
+          for (let y = 70; y < 1030; y += 42) {
+            context.beginPath();
+            context.arc(x, y, 5, 0, Math.PI * 2);
+            context.fill();
+          }
+        }
+        context.globalAlpha = 1;
+
         context.direction = "rtl";
-        context.textAlign = "center";
-        context.fillStyle = "#ffffff";
-        context.font = "bold 72px Arial";
-        context.fillText("شام لينك", 540, 105);
-        context.font = "32px Arial";
-        context.fillText("إشعار حوالة مالية", 540, 170);
-
-        context.fillStyle = "#ffffff";
-        context.fillRect(70, 280, 940, 900);
         context.textAlign = "right";
-        context.fillStyle = "#111827";
-        context.font = "36px Arial";
 
-        const senderName = transfer.sender || "غير مذكور";
-        const lines = [
-          "رقم الحوالة: " + transfer.code,
-          "اسم المرسل: " + senderName,
-          "اسم المستلم: " + transfer.receiver,
-          "المبلغ: " +
-            Number(transfer.amount).toFixed(2) +
-            " " +
-            transfer.currency,
-          "العمولة: " +
+        context.strokeStyle = "#07875f";
+        context.lineWidth = 12;
+        context.beginPath();
+        context.arc(1450, 105, 58, 0, Math.PI * 2);
+        context.stroke();
+        context.fillStyle = "#07875f";
+        context.font = "bold 34px Arial";
+        context.textAlign = "center";
+        context.fillText("SL", 1450, 118);
+        context.textAlign = "right";
+        context.font = "bold 48px Arial";
+        context.fillText("شام لينك", 1365, 95);
+        context.fillStyle = "#64748b";
+        context.font = "25px Arial";
+        context.fillText("إشعار حوالة مالية", 1365, 138);
+
+        context.fillStyle = "#111827";
+        context.font = "30px Arial";
+        context.fillText("رقم الإشعار", 565, 82);
+        context.fillStyle = "#1d4ed8";
+        context.font = "bold 38px Arial";
+        context.fillText("SL-" + transfer.code, 565, 132);
+
+        context.strokeStyle = "#d1d5db";
+        context.lineWidth = 2;
+        context.beginPath();
+        context.moveTo(60, 190);
+        context.lineTo(1540, 190);
+        context.stroke();
+
+        function drawField(label, value, x, y, width) {
+          context.fillStyle = "#64748b";
+          context.font = "26px Arial";
+          context.fillText(label, x + width, y);
+          context.fillStyle = "#111827";
+          context.font = "bold 31px Arial";
+          context.fillText(String(value || "غير محدد"), x + width, y + 48);
+        }
+
+        function drawWrappedText(text, rightX, y, maxWidth, lineHeight) {
+          const words = String(text || "غير محدد").split(" ");
+          let line = "";
+          let currentY = y;
+          words.forEach(function (word) {
+            const testLine = line ? line + " " + word : word;
+            if (context.measureText(testLine).width > maxWidth && line) {
+              context.fillText(line, rightX, currentY);
+              line = word;
+              currentY += lineHeight;
+            } else {
+              line = testLine;
+            }
+          });
+          context.fillText(line, rightX, currentY);
+        }
+
+        drawField("المصدر", transfer.source, 1080, 245, 380);
+        drawField("الوجهة", transfer.destination || "غير محددة", 590, 245, 380);
+        drawField("التاريخ", transfer.date, 80, 245, 400);
+
+        context.fillStyle = "#eef2f1";
+        context.fillRect(45, 365, 1510, 310);
+        drawField("المستفيد", transfer.receiver, 1080, 420, 390);
+        drawField("رقم الجوال", transfer.phone, 590, 420, 380);
+        drawField("المرسل", transfer.sender || "غير مذكور", 90, 420, 380);
+
+        context.textAlign = "center";
+        context.fillStyle = "#dc2626";
+        context.font = "bold 50px Arial";
+        context.fillText(
+          Number(transfer.amount).toFixed(2) + " " + transfer.currency,
+          800,
+          585,
+        );
+        context.fillStyle = "#374151";
+        context.font = "27px Arial";
+        context.fillText(
+          "العمولة " +
             Number(transfer.commission || 0).toFixed(2) +
-            " " +
-            transfer.currency,
-          "الإجمالي: " +
+            " — الإجمالي " +
             Number(transfer.total || transfer.amount).toFixed(2) +
             " " +
             transfer.currency,
-          "المصدر: " + transfer.source,
-          "الحالة: " + (transfer.status || "قيد الانتظار"),
-          "تاريخ الإنشاء: " + transfer.date,
-        ];
+          800,
+          635,
+        );
 
-        if (transfer.status === "تم التسليم") {
-          lines.push("سلّمها الموظف: " + transfer.deliveredBy);
-          lines.push("وقت التسليم: " + transfer.deliveredAt);
-        }
-
-        lines.forEach(function (line, index) {
-          context.fillText(line, 940, 370 + index * 76);
-        });
-
-        context.textAlign = "center";
-        context.fillStyle = "#64748b";
+        context.textAlign = "right";
+        context.fillStyle = "#111827";
+        context.font = "bold 30px Arial";
+        context.fillText("عنوان التسليم", 1480, 735);
         context.font = "28px Arial";
+        context.fillStyle = "#374151";
+        drawWrappedText(
+          transfer.deliveryAddress || transfer.destination || "غير محدد",
+          1480,
+          785,
+          1400,
+          38,
+        );
+
+        context.strokeStyle = "#9ca3af";
+        context.setLineDash([7, 7]);
+        context.beginPath();
+        context.moveTo(70, 835);
+        context.lineTo(1530, 835);
+        context.stroke();
+        context.setLineDash([]);
+
+        context.fillStyle = "#111827";
+        context.font = "bold 30px Arial";
+        context.fillText("ملاحظات هامة", 1480, 895);
+        context.font = "27px Arial";
+        context.fillStyle = "#374151";
         context.fillText(
-          "هذا الإشعار لا يحتوي على كود الاستلام السري",
-          540,
-          1250,
+          "• تُسلّم الحوالة بعد التأكد من الهوية الأصلية للمستفيد.",
+          1480,
+          945,
+        );
+        context.fillText(
+          "• لا تشارك هذا الإشعار إلا مع الجهة المعنية بالحوالة.",
+          1480,
+          990,
+        );
+        context.fillStyle = "#07875f";
+        context.font = "bold 25px Arial";
+        context.textAlign = "left";
+        context.fillText("SL-" + transfer.code, 80, 1040);
+        context.textAlign = "right";
+        context.fillStyle = "#64748b";
+        context.font = "22px Arial";
+        context.fillText(
+          "كود الاستلام السري غير ظاهر في هذا الإشعار",
+          1520,
+          1040,
         );
 
         const link = document.createElement("a");
