@@ -1,0 +1,13 @@
+{
+  "name": "shamlink-platform",
+  "version": "0.2.0",
+  "private": true,
+  "description": "منصة شام لينك لإدارة الوكالات والحوالات",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check dashboard.js && node --check account.js && node --check admin-accounts.js"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
