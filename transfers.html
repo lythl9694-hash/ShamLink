@@ -951,15 +951,6 @@
           currency +
           "<br><strong>" +
           escapeHtml(amountInArabicWords(amount, currency)) +
-          "</strong>" +
-          "<br>العمولة: " +
-          commissionResult.commission.toFixed(2) +
-          " " +
-          currency +
-          "<br>الإجمالي: <strong>" +
-          commissionResult.total.toFixed(2) +
-          " " +
-          currency +
           "</strong><br>التاريخ: " +
           escapeHtml(transfer.date) +
           "</div>" +
@@ -1281,17 +1272,6 @@
           amountInArabicWords(transfer.amount, transfer.currency),
           800,
           615,
-        );
-        context.font = "25px Arial";
-        context.fillText(
-          "العمولة " +
-            Number(transfer.commission || 0).toFixed(2) +
-            " — الإجمالي " +
-            Number(transfer.total || transfer.amount).toFixed(2) +
-            " " +
-            transfer.currency,
-          800,
-          655,
         );
 
         context.textAlign = "right";
