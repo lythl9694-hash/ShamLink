@@ -220,6 +220,51 @@
         font-weight: bold;
       }
 
+      .owner-code-panel {
+        margin-top: 14px;
+        padding: 15px;
+        border: 2px solid #07875f;
+        border-radius: 10px;
+        background: #f0fdf8;
+      }
+
+      .owner-code-panel h4 {
+        margin: 0 0 8px;
+        color: #056747;
+      }
+
+      .owner-secret-code {
+        display: inline-block;
+        margin: 5px 0 10px;
+        padding: 7px 14px;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #1d4ed8;
+        font-size: 24px;
+        font-weight: bold;
+        letter-spacing: 3px;
+      }
+
+      .send-code-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .send-code-actions button {
+        margin-top: 0;
+      }
+
+      .whatsapp-button {
+        background: #16a34a;
+      }
+
+      @media (max-width: 520px) {
+        .send-code-actions {
+          grid-template-columns: 1fr;
+        }
+      }
+
       .empty {
         color: #777;
         text-align: center;
@@ -391,7 +436,7 @@
 
       let migratedSmsData = false;
       transfers.forEach(function (transfer) {
-        if (!transfer.smsExpiresAt) {
+        if (transfer.codeSentAt && !transfer.smsExpiresAt) {
           transfer.smsExpiresAt =
             Date.now() + getSmsValidityHours() * 60 * 60 * 1000;
           migratedSmsData = true;
@@ -409,7 +454,10 @@
       if (migratedSmsData) saveTransfers();
 
       function isSmsExpired(transfer) {
-        return Date.now() > Number(transfer.smsExpiresAt || 0);
+        return (
+          Boolean(transfer.codeSentAt) &&
+          Date.now() > Number(transfer.smsExpiresAt || 0)
+        );
       }
 
       function escapeHtml(value) {
@@ -454,6 +502,7 @@
 
             const senderName = transfer.sender ? transfer.sender : "غير مذكور";
             const isDelivered = transfer.status === "تم التسليم";
+            const codeWasSent = Boolean(transfer.codeSentAt);
             const codeExpired = !isDelivered && isSmsExpired(transfer);
             const codeLocked =
               !isDelivered &&
@@ -503,6 +552,23 @@
               "<small>" +
               escapeHtml(transfer.date) +
               "</small>" +
+              (!isDelivered
+                ? '<div class="owner-code-panel"><h4>📨 إرسال الكود للمستلم</h4>' +
+                  (codeWasSent
+                    ? "<div>آخر إرسال: " +
+                      escapeHtml(
+                        transfer.codeChannel === "whatsapp" ? "واتساب" : "SMS",
+                      ) +
+                      " — صالح حتى " +
+                      escapeHtml(
+                        new Date(transfer.smsExpiresAt).toLocaleString("ar"),
+                      ) +
+                      "</div>"
+                    : "<div>أدخل رقم المستلم المسجل بالحوالة، ثم اختر طريقة الإرسال.</div>") +
+                  '<form class="send-code-form" data-code="' +
+                  escapeHtml(transfer.code) +
+                  '" autocomplete="off"><label>رقم هاتف المستلم</label><input name="recipientPhone" type="tel" autocomplete="off" required placeholder="أدخل الرقم للتأكد"><label>طريقة الإرسال</label><select name="channel" required><option value="sms">رسالة SMS</option><option value="whatsapp">واتساب</option></select><button type="submit">إرسال كود الاستلام</button><div class="delivery-error"></div></form></div>'
+                : "") +
               (isDelivered
                 ? '<div class="delivery-details">✅ سلّمها الموظف: <strong>' +
                   escapeHtml(transfer.deliveredBy) +
@@ -513,16 +579,18 @@
                   "<br>وقت التسليم: " +
                   escapeHtml(transfer.deliveredAt) +
                   "</div>"
-                : codeExpired
-                  ? '<div class="code-warning">انتهت صلاحية كود الاستلام</div>'
-                  : codeLocked
-                    ? '<div class="code-warning">تم إيقاف التحقق بعد 3 محاولات خاطئة</div>'
-                    : '<button class="delivery-button" type="button" data-action="open-delivery" data-code="' +
-                      escapeHtml(transfer.code) +
-                      '">تسليم الحوالة</button>' +
-                      '<form class="delivery-form" data-code="' +
-                      escapeHtml(transfer.code) +
-                      '"><label>كود SMS الذي قدّمه المستلم</label><input name="smsCode" inputmode="numeric" maxlength="4" required placeholder="أدخل الكود المكوّن من 4 أرقام"><label>اسم الموظف الذي سلّم الحوالة</label><input name="employeeName" required placeholder="الاسم الكامل"><label>رقم الموظف</label><input name="employeeId" required placeholder="مثال: EMP-001"><label>رقم هوية المستلم</label><input name="recipientId" required placeholder="هوية، إقامة أو جواز سفر"><button type="submit">تأكيد التسليم</button><div class="delivery-error"></div></form>') +
+                : !codeWasSent
+                  ? '<div class="code-warning">بانتظار إرسال كود الاستلام للمستلم</div>'
+                  : codeExpired
+                    ? '<div class="code-warning">انتهت صلاحية كود الاستلام</div>'
+                    : codeLocked
+                      ? '<div class="code-warning">تم إيقاف التحقق بعد 3 محاولات خاطئة</div>'
+                      : '<button class="delivery-button" type="button" data-action="open-delivery" data-code="' +
+                        escapeHtml(transfer.code) +
+                        '">تسليم الحوالة</button>' +
+                        '<form class="delivery-form" data-code="' +
+                        escapeHtml(transfer.code) +
+                        '" autocomplete="off"><label>كود SMS الذي قدّمه المستلم</label><input name="smsCode" inputmode="numeric" maxlength="4" autocomplete="off" required placeholder="أدخل الكود المكوّن من 4 أرقام"><label>اسم الموظف الذي سلّم الحوالة</label><input name="employeeName" autocomplete="off" required placeholder="الاسم الكامل"><label>رقم الموظف</label><input name="employeeId" autocomplete="off" required placeholder="مثال: EMP-001"><label>رقم هوية المستلم</label><input name="recipientId" autocomplete="off" required placeholder="هوية، إقامة أو جواز سفر"><button type="submit">تأكيد التسليم</button><div class="delivery-error"></div></form>') +
               '<button class="receipt-button" type="button" data-action="download-receipt" data-code="' +
               escapeHtml(transfer.code) +
               '">تنزيل الإشعار كصورة</button>';
@@ -579,7 +647,9 @@
           notes: notes,
           status: "قيد الانتظار",
           date: new Date().toLocaleString("ar"),
-          smsExpiresAt: Date.now() + getSmsValidityHours() * 60 * 60 * 1000,
+          codeSentAt: null,
+          codeChannel: null,
+          smsExpiresAt: null,
           smsAttempts: 0,
           smsLocked: false,
         };
@@ -611,7 +681,7 @@
           "</strong><br>التاريخ: " +
           escapeHtml(transfer.date) +
           "</div>" +
-          '<div class="sms-message">📱 كود الاستلام سري ولا يظهر في الإشعار. مدة صلاحيته ' +
+          '<div class="sms-message">📱 كود الاستلام سري ولا يظهر في الإشعار. تبدأ مدة صلاحيته عند إرساله للمستلم، ومدتها ' +
           getSmsValidityHours() +
           " ساعة، ويسمح بثلاث محاولات فقط.</div>" +
           '<button class="receipt-button" type="button" data-action="download-receipt" data-code="' +
@@ -648,6 +718,32 @@
       });
 
       transfersList.addEventListener("submit", function (event) {
+        const sendCodeForm = event.target.closest(".send-code-form");
+        if (sendCodeForm) {
+          event.preventDefault();
+          const transfer = transfers.find(
+            (item) => String(item.code) === sendCodeForm.dataset.code,
+          );
+          if (!transfer) return;
+
+          const enteredPhone = sendCodeForm.elements.recipientPhone.value
+            .replace(/\D/g, "")
+            .replace(/^00/, "");
+          const savedPhone = String(transfer.phone)
+            .replace(/\D/g, "")
+            .replace(/^00/, "");
+          const error = sendCodeForm.querySelector(".delivery-error");
+
+          if (!enteredPhone || enteredPhone !== savedPhone) {
+            error.textContent = "رقم الهاتف لا يطابق الرقم المسجل بالحوالة.";
+            error.style.display = "block";
+            return;
+          }
+
+          sendPickupCode(transfer.code, sendCodeForm.elements.channel.value);
+          return;
+        }
+
         const deliveryForm = event.target.closest(".delivery-form");
         if (!deliveryForm) return;
         event.preventDefault();
@@ -706,6 +802,54 @@
         saveTransfers();
         renderTransfers(searchInput.value);
       });
+
+      function sendPickupCode(transferCode, channel) {
+        const transfer = transfers.find(
+          (item) => String(item.code) === String(transferCode),
+        );
+        if (!transfer || transfer.status === "تم التسليم") return;
+
+        transfer.smsCode = Math.floor(1000 + Math.random() * 9000);
+        transfer.codeSentAt = Date.now();
+        transfer.codeChannel = channel;
+        transfer.smsExpiresAt =
+          Date.now() + getSmsValidityHours() * 60 * 60 * 1000;
+        transfer.smsAttempts = 0;
+        transfer.smsLocked = false;
+        transfer.auditLog = transfer.auditLog || [];
+        transfer.auditLog.push({
+          action:
+            channel === "whatsapp"
+              ? "إرسال كود الاستلام عبر واتساب"
+              : "إرسال كود الاستلام عبر SMS",
+          date: new Date().toLocaleString("ar"),
+        });
+        saveTransfers();
+
+        const message =
+          "شام لينك: كود استلام الحوالة رقم " +
+          transfer.code +
+          " هو " +
+          transfer.smsCode +
+          ". صالح لمدة " +
+          getSmsValidityHours() +
+          " ساعة. لا تشارك الكود مع أي شخص قبل استلام حوالتك.";
+
+        renderTransfers(searchInput.value);
+
+        if (channel === "whatsapp") {
+          const whatsappPhone = String(transfer.phone).replace(/\D/g, "");
+          window.location.href =
+            "https://wa.me/" +
+            whatsappPhone +
+            "?text=" +
+            encodeURIComponent(message);
+          return;
+        }
+
+        window.location.href =
+          "sms:" + transfer.phone + "?body=" + encodeURIComponent(message);
+      }
 
       function downloadReceipt(transferCode) {
         const transfer = transfers.find(
