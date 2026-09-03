@@ -152,9 +152,21 @@
               inputmode="decimal"
             />
           </div>
-          <button type="submit">حفظ نسب العمولة</button>
+          <div class="row">
+            <label for="smsValidityHours">مدة صلاحية كود SMS (بالساعات)</label>
+            <input
+              id="smsValidityHours"
+              type="number"
+              min="1"
+              max="168"
+              step="1"
+              inputmode="numeric"
+              required
+            />
+          </div>
+          <button type="submit">حفظ الإعدادات</button>
         </form>
-        <div class="notice" id="notice">تم حفظ نسب العمولة بنجاح ✅</div>
+        <div class="notice" id="notice">تم حفظ الإعدادات بنجاح ✅</div>
       </section>
     </main>
     <script>
@@ -163,6 +175,10 @@
       const notice = document.getElementById("notice");
       const savedRates =
         JSON.parse(localStorage.getItem("shamlink_commission_rates")) || {};
+      const smsValidityInput = document.getElementById("smsValidityHours");
+      smsValidityInput.value = Number(
+        localStorage.getItem("shamlink_sms_validity_hours") || 24,
+      );
       currencies.forEach((currency) => {
         document.getElementById(currency).value = Number(
           savedRates[currency] || 0,
@@ -180,6 +196,10 @@
         localStorage.setItem(
           "shamlink_commission_rates",
           JSON.stringify(rates),
+        );
+        localStorage.setItem(
+          "shamlink_sms_validity_hours",
+          String(Math.max(1, Number(smsValidityInput.value || 24))),
         );
         notice.style.display = "block";
       });
