@@ -25,6 +25,7 @@
     return (
       {
         agent: "وكيل",
+        super_admin: "مساعد صاحب المنصة",
         deputy_agent: "نائب الوكيل",
         assistant_deputy: "مساعد نائب الوكيل",
         employee: "موظف",
