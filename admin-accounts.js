@@ -33,6 +33,11 @@
   api("/api/auth/status")
     .then(function (data) {
       currentAccount = data.user;
+      if (currentAccount?.role !== "owner") {
+        document.querySelectorAll(".owner-only").forEach((element) => {
+          element.hidden = true;
+        });
+      }
       if (currentAccount?.role !== "agent") {
         document.querySelectorAll(".agent-only").forEach((element) => {
           element.hidden = true;
@@ -41,6 +46,7 @@
           element.hidden = true;
         });
       }
+      initializeAnnouncementManagement();
     })
     .catch(function () {});
 
@@ -98,6 +104,95 @@
     } catch (error) {
       alert(error.message);
     }
+  });
+
+  const superAdminForm = document.getElementById("superAdminForm");
+  const superAdminList = document.getElementById("superAdminList");
+
+  async function loadSuperAdmins() {
+    if (!superAdminList || currentAccount?.role !== "owner") return;
+    try {
+      const data = await api("/api/owner/super-admins");
+      superAdminList.innerHTML = data.admins.length ? data.admins.map((admin) =>
+        '<article class="employee-card"><h3>' + escapeHtml(admin.name) + '</h3><div class="meta"><span class="badge">' +
+        escapeHtml(admin.id) + "</span><br>" + escapeHtml(admin.phone) + "<br>نشر الإعلانات: " +
+        (admin.canPublishAnnouncements ? "مسموح" : "متوقف") + '</div><div class="send-code-actions"><button data-admin-publish="' +
+        escapeHtml(admin.id) + '" data-allowed="' + (admin.canPublishAnnouncements ? "false" : "true") + '">' +
+        (admin.canPublishAnnouncements ? "إيقاف نشر الإعلانات" : "تشغيل نشر الإعلانات") + '</button><button data-admin-revoke="' +
+        escapeHtml(admin.id) + '" style="background:#b91c1c">سحب Super Admin</button></div></article>',
+      ).join("") : '<p class="empty">لا يوجد مساعدون حالياً.</p>';
+    } catch (error) { superAdminList.innerHTML = '<p class="empty">' + escapeHtml(error.message) + "</p>"; }
+  }
+
+  superAdminForm?.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    try {
+      await api("/api/owner/super-admins", { method: "POST", body: JSON.stringify({ userId: document.getElementById("superAdminUserId").value.trim() }) });
+      superAdminForm.reset();
+      loadSuperAdmins();
+    } catch (error) { alert(error.message); }
+  });
+
+  superAdminList?.addEventListener("click", async function (event) {
+    const publish = event.target.closest("[data-admin-publish]");
+    const revoke = event.target.closest("[data-admin-revoke]");
+    try {
+      if (publish) await api("/api/owner/super-admins/" + encodeURIComponent(publish.dataset.adminPublish) + "/announcement-permission", { method: "POST", body: JSON.stringify({ allowed: publish.dataset.allowed === "true" }) });
+      if (revoke && confirm("هل تريد سحب صلاحية Super Admin؟")) await api("/api/owner/super-admins/" + encodeURIComponent(revoke.dataset.adminRevoke) + "/revoke", { method: "POST", body: "{}" });
+      if (publish || revoke) loadSuperAdmins();
+    } catch (error) { alert(error.message); }
+  });
+
+  const announcementSection = document.getElementById("announcementManagement");
+  const announcementForm = document.getElementById("announcementForm");
+  const managedAnnouncements = document.getElementById("managedAnnouncements");
+
+  async function initializeAnnouncementManagement() {
+    if (!announcementSection) return;
+    try {
+      const access = await api("/api/announcements");
+      if (!access.canPublish) {
+        announcementForm.hidden = true;
+        managedAnnouncements.innerHTML = '<p class="empty">صلاحية نشر الإعلانات متوقفة. يستطيع صاحب المنصة تشغيلها لك.</p>';
+        return;
+      }
+      announcementForm.hidden = false;
+      loadManagedAnnouncements();
+      loadSuperAdmins();
+    } catch (error) { announcementSection.hidden = true; }
+  }
+
+  async function loadManagedAnnouncements() {
+    if (!managedAnnouncements) return;
+    try {
+      const data = await api("/api/announcements/manage");
+      managedAnnouncements.innerHTML = data.announcements.length ? data.announcements.map((item) =>
+        '<div class="ledger-row"><strong>' + escapeHtml(item.title) + '</strong><br><span class="meta">' +
+        escapeHtml(item.body) + "<br>الفئة: " + escapeHtml(item.audience) + " · الأهمية: " + escapeHtml(item.priority) +
+        " · الحالة: " + (item.is_active ? "منشور" : "متوقف") + "</span>" + (item.is_active ? '<button type="button" data-close-announcement="' + escapeHtml(item.id) + '" style="margin-top:8px;background:#b91c1c">إيقاف الإعلان</button>' : "") + "</div>",
+      ).join("") : '<p class="empty">لم تُنشر إعلانات بعد.</p>';
+    } catch (error) { managedAnnouncements.innerHTML = '<p class="empty">' + escapeHtml(error.message) + "</p>"; }
+  }
+
+  announcementForm?.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    const notice = document.getElementById("announcementManagementNotice");
+    try {
+      const endsValue = document.getElementById("announcementEndsAt").value;
+      const data = await api("/api/announcements", { method: "POST", body: JSON.stringify({
+        title: document.getElementById("announcementTitle").value.trim(), body: document.getElementById("announcementBody").value.trim(),
+        audience: document.getElementById("announcementAudience").value, priority: document.getElementById("announcementPriority").value,
+        endsAt: endsValue ? new Date(endsValue).toISOString() : null,
+      }) });
+      notice.hidden = false; notice.textContent = data.message; announcementForm.reset(); loadManagedAnnouncements();
+    } catch (error) { notice.hidden = false; notice.textContent = error.message; }
+  });
+
+  managedAnnouncements?.addEventListener("click", async function (event) {
+    const button = event.target.closest("[data-close-announcement]");
+    if (!button) return;
+    try { await api("/api/announcements/" + encodeURIComponent(button.dataset.closeAnnouncement) + "/close", { method: "POST", body: "{}" }); loadManagedAnnouncements(); }
+    catch (error) { alert(error.message); }
   });
 
   const createInvite = document.getElementById("createInvite");
