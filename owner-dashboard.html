@@ -19,10 +19,6 @@
       </div>
     </header>
     <main class="container">
-      <div class="notice">
-        هذه نسخة تشغيل أولية. قفل الصفحة على صاحب المنصة فقط سيُفعّل مع تسجيل
-        الدخول وقاعدة البيانات.
-      </div>
       <section class="stats" id="stats"></section>
       <section class="panel">
         <h2>طلبات الوكلاء</h2>
@@ -34,6 +30,21 @@
       <section class="panel" id="agenciesSection">
         <h2>الوكالات</h2>
         <div class="agency-list" id="agencyList"></div>
+      </section>
+      <section class="panel">
+        <h2>إدارة سيولة الوكالات</h2>
+        <p class="meta">أضف أو اخصم رصيداً محاسبياً باستخدام معرّف الوكالة. تُسجّل كل حركة ولا يمكن حذفها.</p>
+        <form id="liquidityForm" class="liquidity-form">
+          <div><label for="liquidityAgencyId">معرّف الوكالة</label><input id="liquidityAgencyId" placeholder="AG-000000" required /></div>
+          <div><label for="liquidityCurrency">العملة</label><select id="liquidityCurrency" required><option>USD</option><option>EUR</option><option>TRY</option><option>SYP</option></select></div>
+          <div><label for="liquidityAmount">المبلغ</label><input id="liquidityAmount" type="number" min="0.01" step="0.01" required /></div>
+          <div><label for="liquidityDirection">نوع الحركة</label><select id="liquidityDirection"><option value="add">إضافة رصيد</option><option value="subtract">خصم رصيد</option></select></div>
+          <div class="wide"><label for="liquidityReason">السبب أو رقم المرجع</label><input id="liquidityReason" required /></div>
+          <button type="submit">تنفيذ الحركة</button>
+        </form>
+        <div id="liquidityNotice" class="notice" hidden></div>
+        <div id="liquidityBalances" class="balance-grid"></div>
+        <div id="liquidityLedger" class="ledger-list"></div>
       </section>
       <section class="panel">
         <h2>البحث عن موظف</h2>
@@ -50,7 +61,7 @@
       </section>
       <section class="panel employee-detail" id="employeeDetail"></section>
     </main>
-    <script src="dashboard.js"></script>
-    <script src="admin-accounts.js"></script>
+    <script src="dashboard.js?v=20260904-3"></script>
+    <script src="admin-accounts.js?v=20260904-3"></script>
   </body>
 </html>
