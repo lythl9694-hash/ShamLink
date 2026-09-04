@@ -203,6 +203,76 @@
     }
   });
 
+  const liquidityBalances = document.getElementById("liquidityBalances");
+  const liquidityLedger = document.getElementById("liquidityLedger");
+  const liquidityForm = document.getElementById("liquidityForm");
+
+  function formatMoney(value, currency) {
+    return new Intl.NumberFormat("ar", {
+      minimumFractionDigits: currency === "SYP" ? 0 : 2,
+      maximumFractionDigits: currency === "SYP" ? 0 : 2,
+    }).format(Number(value || 0)) + " " + currency;
+  }
+
+  async function loadLiquidity() {
+    if (!liquidityBalances || !liquidityLedger) return;
+    try {
+      const data = await api("/api/liquidity");
+      liquidityBalances.innerHTML = data.balances.length
+        ? data.balances.map((item) =>
+            '<div class="balance-card"><span>' + escapeHtml(item.agencyName) +
+            " — " + escapeHtml(item.currency) + '</span><strong>' +
+            escapeHtml(formatMoney(item.balance, item.currency)) + "</strong></div>",
+          ).join("")
+        : '<p class="empty">لا توجد أرصدة سيولة بعد.</p>';
+      liquidityLedger.innerHTML = data.ledger.length
+        ? '<h3>آخر الحركات</h3>' + data.ledger.slice(0, 30).map((item) => {
+            const positive = Number(item.amount_minor) >= 0;
+            return '<div class="ledger-row"><strong>' + escapeHtml(item.agency_name) +
+              " — " + escapeHtml(item.currency) + '</strong><br><span class="' +
+              (positive ? "ledger-positive" : "ledger-negative") + '">' +
+              (positive ? "+" : "") + escapeHtml(formatMoney(item.amount, item.currency)) +
+              "</span> · الرصيد بعد الحركة: " + escapeHtml(formatMoney(item.balanceAfter, item.currency)) +
+              "<br><span class=\"meta\">" + escapeHtml(item.reason || item.movement_type) +
+              " · " + escapeHtml(new Date(item.created_at).toLocaleString("ar")) + "</span></div>";
+          }).join("")
+        : "";
+    } catch (error) {
+      liquidityBalances.innerHTML = '<p class="empty">' + escapeHtml(error.message) + "</p>";
+    }
+  }
+
+  liquidityForm?.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    const button = liquidityForm.querySelector('button[type="submit"]');
+    const notice = document.getElementById("liquidityNotice");
+    button.disabled = true;
+    try {
+      const data = await api("/api/owner/liquidity/adjust", {
+        method: "POST",
+        body: JSON.stringify({
+          agencyId: document.getElementById("liquidityAgencyId").value.trim(),
+          currency: document.getElementById("liquidityCurrency").value,
+          amount: document.getElementById("liquidityAmount").value,
+          direction: document.getElementById("liquidityDirection").value,
+          reason: document.getElementById("liquidityReason").value.trim(),
+          idempotencyKey: crypto.randomUUID(),
+        }),
+      });
+      notice.hidden = false;
+      notice.textContent = data.message;
+      liquidityForm.reset();
+      await loadLiquidity();
+    } catch (error) {
+      notice.hidden = false;
+      notice.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  loadLiquidity();
+
   function roleName(role) {
     return (
       {
