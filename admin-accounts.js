@@ -29,6 +29,21 @@
     });
   }
 
+  let currentAccount = null;
+  api("/api/auth/status")
+    .then(function (data) {
+      currentAccount = data.user;
+      if (currentAccount?.role !== "agent") {
+        document.querySelectorAll(".agent-only").forEach((element) => {
+          element.hidden = true;
+        });
+        document.querySelectorAll(".agent-role-actions").forEach((element) => {
+          element.hidden = true;
+        });
+      }
+    })
+    .catch(function () {});
+
   const pendingAgents = document.getElementById("pendingAgents");
   if (pendingAgents) loadAgents();
 
@@ -129,6 +144,8 @@
                 escapeHtml(employee.phone) +
                 "<br>الحالة: " +
                 escapeHtml(employee.status) +
+                "<br>الدور: " +
+                escapeHtml(roleName(employee.role)) +
                 "</div>" +
                 (employee.status === "pending_agent"
                   ? '<div class="send-code-actions"><button data-employee-action="approve" data-employee-id="' +
@@ -136,7 +153,15 @@
                     '">موافقة</button><button data-employee-action="reject" data-employee-id="' +
                     escapeHtml(employee.id) +
                     '" style="background:#b91c1c">رفض</button></div>'
-                  : "") +
+                  : employee.status === "active"
+                    ? '<div class="send-code-actions agent-role-actions"><button data-staff-role="deputy_agent" data-employee-id="' +
+                      escapeHtml(employee.id) +
+                      '">تعيين نائب وكيل</button><button data-staff-role="assistant_deputy" data-employee-id="' +
+                      escapeHtml(employee.id) +
+                      '">تعيين مساعد نائب</button><button data-staff-role="employee" data-employee-id="' +
+                      escapeHtml(employee.id) +
+                      '" style="background:#475569">إعادة كموظف</button></div>'
+                    : "") +
                 "</article>",
             )
             .join("")
@@ -148,6 +173,23 @@
   }
 
   pendingEmployees?.addEventListener("click", async function (event) {
+    const roleButton = event.target.closest("[data-staff-role]");
+    if (roleButton) {
+      if (currentAccount?.role !== "agent") return;
+      try {
+        await api(
+          `/api/agent/employees/${encodeURIComponent(roleButton.dataset.employeeId)}/role`,
+          {
+            method: "POST",
+            body: JSON.stringify({ role: roleButton.dataset.staffRole }),
+          },
+        );
+        loadEmployees();
+      } catch (error) {
+        alert(error.message);
+      }
+      return;
+    }
     const button = event.target.closest("[data-employee-action]");
     if (!button) return;
     try {
@@ -160,4 +202,14 @@
       alert(error.message);
     }
   });
+
+  function roleName(role) {
+    return (
+      {
+        employee: "موظف",
+        deputy_agent: "نائب الوكيل",
+        assistant_deputy: "مساعد نائب الوكيل",
+      }[role] || role
+    );
+  }
 })();
