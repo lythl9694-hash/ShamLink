@@ -175,6 +175,78 @@ db.exec(`
     FOREIGN KEY (created_by) REFERENCES users(id),
     FOREIGN KEY (accepted_by) REFERENCES users(id)
   );
+  CREATE TABLE IF NOT EXISTS agency_credit_limits (
+    id TEXT PRIMARY KEY,
+    creditor_agency_id TEXT NOT NULL,
+    debtor_agency_id TEXT NOT NULL,
+    currency TEXT NOT NULL CHECK (currency IN ('USD','SYP','TRY','EUR')),
+    limit_minor INTEGER NOT NULL CHECK (limit_minor > 0),
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (creditor_agency_id,debtor_agency_id,currency),
+    FOREIGN KEY (creditor_agency_id) REFERENCES agencies(id),
+    FOREIGN KEY (debtor_agency_id) REFERENCES agencies(id),
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  );
+  CREATE TABLE IF NOT EXISTS agency_debt_ledger (
+    id TEXT PRIMARY KEY,
+    creditor_agency_id TEXT NOT NULL,
+    debtor_agency_id TEXT NOT NULL,
+    currency TEXT NOT NULL CHECK (currency IN ('USD','SYP','TRY','EUR')),
+    amount_minor INTEGER NOT NULL,
+    movement_type TEXT NOT NULL CHECK (movement_type IN ('transfer','settlement','owner_reversal')),
+    transfer_id TEXT,
+    settlement_id TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (creditor_agency_id) REFERENCES agencies(id),
+    FOREIGN KEY (debtor_agency_id) REFERENCES agencies(id),
+    FOREIGN KEY (transfer_id) REFERENCES transfers(id),
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  );
+  CREATE TABLE IF NOT EXISTS agency_settlements (
+    id TEXT PRIMARY KEY,
+    reference_number TEXT NOT NULL UNIQUE,
+    creditor_agency_id TEXT NOT NULL,
+    debtor_agency_id TEXT NOT NULL,
+    currency TEXT NOT NULL CHECK (currency IN ('USD','SYP','TRY','EUR')),
+    amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+    proof_document TEXT NOT NULL,
+    proof_ocr_text TEXT,
+    status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed','reversed')),
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    reversed_by TEXT,
+    reversed_at TEXT,
+    reversal_reason TEXT,
+    FOREIGN KEY (creditor_agency_id) REFERENCES agencies(id),
+    FOREIGN KEY (debtor_agency_id) REFERENCES agencies(id),
+    FOREIGN KEY (created_by) REFERENCES users(id),
+    FOREIGN KEY (reversed_by) REFERENCES users(id)
+  );
+  CREATE TABLE IF NOT EXISTS debt_notifications (
+    id TEXT PRIMARY KEY,
+    debtor_agency_id TEXT NOT NULL,
+    creditor_agency_id TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    outstanding_minor INTEGER NOT NULL,
+    limit_minor INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (debtor_agency_id) REFERENCES agencies(id),
+    FOREIGN KEY (creditor_agency_id) REFERENCES agencies(id)
+  );
+  CREATE TABLE IF NOT EXISTS debt_notification_reads (
+    notification_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    read_at TEXT NOT NULL,
+    PRIMARY KEY (notification_id,user_id),
+    FOREIGN KEY (notification_id) REFERENCES debt_notifications(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
   CREATE INDEX IF NOT EXISTS idx_users_status_role ON users(status, role);
   CREATE INDEX IF NOT EXISTS idx_users_agency ON users(agency_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
@@ -185,6 +257,9 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_liquidity_ledger_agency ON liquidity_ledger(agency_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_liquidity_ledger_transfer ON liquidity_ledger(transfer_id);
   CREATE INDEX IF NOT EXISTS idx_contracts_agencies ON agency_contracts(source_agency_id,destination_agency_id,status);
+  CREATE INDEX IF NOT EXISTS idx_debt_ledger_pair ON agency_debt_ledger(creditor_agency_id,debtor_agency_id,currency,created_at);
+  CREATE INDEX IF NOT EXISTS idx_settlements_pair ON agency_settlements(creditor_agency_id,debtor_agency_id,currency,created_at);
+  CREATE INDEX IF NOT EXISTS idx_debt_notifications_agency ON debt_notifications(debtor_agency_id,is_active,created_at);
 `);
 
 function migrateUsersForSuperAdmin() {
@@ -279,6 +354,8 @@ const rolePages = {
   "/profile.js": ["owner", "super_admin", "agent", "deputy_agent", "assistant_deputy", "employee", "client"],
   "/contracts.html": ["owner", "agent", "deputy_agent", "assistant_deputy"],
   "/contracts.js": ["owner", "agent", "deputy_agent", "assistant_deputy"],
+  "/settlements.html": ["owner", "agent", "deputy_agent", "assistant_deputy"],
+  "/settlements.js": ["owner", "agent", "deputy_agent", "assistant_deputy"],
   "/transfers.html": [
     "owner",
     "agent",
@@ -348,6 +425,42 @@ function contractNumbers() {
   do referenceNumber = `REF-${year}-${crypto.randomInt(100000, 1000000)}`;
   while (db.prepare("SELECT 1 FROM agency_contracts WHERE reference_number=?").get(referenceNumber));
   return { contractNumber, referenceNumber };
+}
+
+function agencyDebtMinor(creditorAgencyId, debtorAgencyId, currency) {
+  return Number(db.prepare(`SELECT COALESCE(SUM(amount_minor),0) AS total
+    FROM agency_debt_ledger WHERE creditor_agency_id=? AND debtor_agency_id=? AND currency=?`)
+    .get(creditorAgencyId, debtorAgencyId, currency)?.total || 0);
+}
+
+function debtLimit(creditorAgencyId, debtorAgencyId, currency) {
+  return db.prepare(`SELECT * FROM agency_credit_limits
+    WHERE creditor_agency_id=? AND debtor_agency_id=? AND currency=?`)
+    .get(creditorAgencyId, debtorAgencyId, currency);
+}
+
+function createDebtLimitNotification(creditor, debtor, currency, outstandingMinor, limitMinor) {
+  const existing = db.prepare(`SELECT id FROM debt_notifications WHERE debtor_agency_id=?
+    AND creditor_agency_id=? AND currency=? AND is_active=1`).get(debtor.id, creditor.id, currency);
+  if (existing) return existing.id;
+  const id = uniqueId("debt_notifications", "DBN");
+  const outstanding = fromMinorUnits(outstandingMinor, currency);
+  const limit = fromMinorUnits(limitMinor, currency);
+  const title = "تنبيه ببلوغ سقف الديون";
+  const body = `لقد وصلت وكالتكم إلى سقف الديون المحدد بينها وبين وكالة ${creditor.name}، والبالغ ${limit} ${currency}. المبلغ المستحق حالياً ${outstanding} ${currency}. يرجى تسديد المبالغ المستحقة في أقرب وقت ممكن لاستئناف المعاملات بين الوكالتين. وفي حال تقديم صاحب المستحقات بلاغاً رسمياً، تحتفظ المنصة بسجلات المعاملات والمستندات وإثباتات التسليم المرفقة، ويمكن تقديمها للجهات المختصة وفق الإجراءات القانونية المعمول بها. شاكرين تعاونكم — إدارة شام لينك`;
+  db.prepare(`INSERT INTO debt_notifications(id,debtor_agency_id,creditor_agency_id,currency,
+    outstanding_minor,limit_minor,title,body,created_at) VALUES(?,?,?,?,?,?,?,?,?)`)
+    .run(id, debtor.id, creditor.id, currency, outstandingMinor, limitMinor, title, body, now());
+  audit(null, "إشعار بلوغ سقف المديونية", "debt_notification", id, {
+    debtorAgencyId: debtor.id, creditorAgencyId: creditor.id, currency, outstanding, limit,
+  });
+  return id;
+}
+
+function closeDebtLimitNotification(creditorAgencyId, debtorAgencyId, currency) {
+  db.prepare(`UPDATE debt_notifications SET is_active=0 WHERE creditor_agency_id=?
+    AND debtor_agency_id=? AND currency=? AND is_active=1`)
+    .run(creditorAgencyId, debtorAgencyId, currency);
 }
 
 function balanceRows(agencyId = null) {
@@ -979,7 +1092,20 @@ async function handleApi(req, res, pathname) {
       WHERE a.is_active=1 AND a.starts_at<=? AND (a.ends_at IS NULL OR a.ends_at>?)
       AND a.audience IN (${placeholders})
       ORDER BY CASE a.priority WHEN 'urgent' THEN 1 WHEN 'important' THEN 2 ELSE 3 END,a.created_at DESC`).all(viewer.id, now(), now(), ...audiences);
-    return json(res, 200, { announcements: announcements.map((item) => ({ ...item, is_read: Boolean(item.is_read) })), canPublish: canPublishAnnouncements(viewer) });
+    let debtNotices = [];
+    if (viewer.role === "owner" || (viewer.agencyId && ["agent", "deputy_agent", "assistant_deputy"].includes(viewer.role))) {
+      const condition = viewer.role === "owner" ? "1=1" : "n.debtor_agency_id=?";
+      const parameters = viewer.role === "owner" ? [viewer.id] : [viewer.id, viewer.agencyId];
+      debtNotices = db.prepare(`SELECT n.id,n.title,n.body,'urgent' AS priority,n.created_at,
+        'نظام شام لينك' AS author_name,CASE WHEN r.user_id IS NULL THEN 0 ELSE 1 END AS is_read
+        FROM debt_notifications n LEFT JOIN debt_notification_reads r
+        ON r.notification_id=n.id AND r.user_id=? WHERE n.is_active=1 AND ${condition}
+        ORDER BY n.created_at DESC`).all(...parameters);
+    }
+    const combined = [...debtNotices, ...announcements]
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+      .map((item) => ({ ...item, is_read: Boolean(item.is_read) }));
+    return json(res, 200, { announcements: combined, canPublish: canPublishAnnouncements(viewer) });
   }
 
   if (req.method === "GET" && pathname === "/api/announcements/manage") {
@@ -1014,6 +1140,15 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && readAnnouncement) {
     const viewer = requireRole(req, res, ["owner", "super_admin", "agent", "deputy_agent", "assistant_deputy", "employee", "client"]);
     if (!viewer) return;
+    const debtNotice = db.prepare("SELECT debtor_agency_id FROM debt_notifications WHERE id=? AND is_active=1").get(readAnnouncement[1]);
+    if (debtNotice) {
+      if (viewer.role !== "owner" && viewer.agencyId !== debtNotice.debtor_agency_id) {
+        return json(res, 403, { error: "ليس لديك صلاحية لهذا الإشعار." });
+      }
+      db.prepare("INSERT OR REPLACE INTO debt_notification_reads(notification_id,user_id,read_at) VALUES(?,?,?)")
+        .run(readAnnouncement[1], viewer.id, now());
+      return json(res, 200, { message: "تم تسجيل قراءة التنبيه." });
+    }
     if (!db.prepare("SELECT 1 FROM announcements WHERE id=? AND is_active=1").get(readAnnouncement[1])) return json(res, 404, { error: "الإعلان غير موجود." });
     db.prepare("INSERT OR REPLACE INTO announcement_reads(announcement_id,user_id,read_at) VALUES(?,?,?)").run(readAnnouncement[1], viewer.id, now());
     return json(res, 200, { message: "تم تسجيل قراءة الإعلان." });
@@ -1528,6 +1663,153 @@ async function handleApi(req, res, pathname) {
     }
   }
 
+  if (req.method === "GET" && pathname === "/api/credit-limits") {
+    const viewer = requireRole(req, res, ["owner", "agent", "deputy_agent", "assistant_deputy"]);
+    if (!viewer) return;
+    const scope = viewer.role === "owner" ? "" : "WHERE l.creditor_agency_id=? OR l.debtor_agency_id=?";
+    const params = viewer.role === "owner" ? [] : [viewer.agencyId, viewer.agencyId];
+    const limits = db.prepare(`SELECT l.*,creditor.name AS agency_name,debtor.name AS counterparty_name
+      FROM agency_credit_limits l JOIN agencies creditor ON creditor.id=l.creditor_agency_id
+      JOIN agencies debtor ON debtor.id=l.debtor_agency_id ${scope}
+      ORDER BY l.updated_at DESC`).all(...params).map((item) => {
+        const outstandingMinor = agencyDebtMinor(item.creditor_agency_id, item.debtor_agency_id, item.currency);
+        return {
+          id: item.id, agencyId: item.creditor_agency_id, agency_name: item.agency_name,
+          counterpartyId: item.debtor_agency_id, counterparty_name: item.counterparty_name,
+          currency: item.currency, limit: fromMinorUnits(item.limit_minor, item.currency),
+          outstanding: fromMinorUnits(outstandingMinor, item.currency),
+          available: fromMinorUnits(Math.max(0, item.limit_minor - outstandingMinor), item.currency),
+          blocked: outstandingMinor >= item.limit_minor, updatedAt: item.updated_at,
+        };
+      });
+    const settlementScope = viewer.role === "owner" ? "" : "WHERE s.creditor_agency_id=? OR s.debtor_agency_id=?";
+    const settlements = db.prepare(`SELECT s.*,creditor.name AS agency_name,debtor.name AS counterparty_name,
+      u.name AS created_by_name FROM agency_settlements s
+      JOIN agencies creditor ON creditor.id=s.creditor_agency_id
+      JOIN agencies debtor ON debtor.id=s.debtor_agency_id JOIN users u ON u.id=s.created_by
+      ${settlementScope} ORDER BY s.created_at DESC LIMIT 200`).all(...params).map((item) => ({
+        id: item.id, reference_number: item.reference_number, agency_name: item.agency_name,
+        counterparty_name: item.counterparty_name, creditorAgencyId: item.creditor_agency_id,
+        debtorAgencyId: item.debtor_agency_id, currency: item.currency,
+        amount: fromMinorUnits(item.amount_minor, item.currency), proof_document: item.proof_document,
+        status: item.status, created_by_name: item.created_by_name, created_at: item.created_at,
+        reversed_at: item.reversed_at, reversal_reason: item.reversal_reason,
+      }));
+    return json(res, 200, { limits, settlements, viewerRole: viewer.role });
+  }
+
+  if (req.method === "POST" && pathname === "/api/agent/credit-limits") {
+    const agent = requireRole(req, res, ["agent"]);
+    if (!agent) return;
+    const body = await readJson(req);
+    const debtorAgencyId = String(body.counterpartyAgencyId || "").trim();
+    const currency = String(body.currency || "").trim();
+    const limitMinor = toMinorUnits(body.limit, currency);
+    const debtor = db.prepare("SELECT id,name FROM agencies WHERE id=? AND status='active'").get(debtorAgencyId);
+    if (!debtor || debtor.id === agent.agencyId || !supportedCurrencies.has(currency) || !limitMinor) {
+      return json(res, 400, { error: "أدخل وكالة أخرى وعملة وسقفاً صحيحاً." });
+    }
+    const creditor = db.prepare("SELECT id,name FROM agencies WHERE id=? AND status='active'").get(agent.agencyId);
+    const outstandingMinor = agencyDebtMinor(creditor.id, debtor.id, currency);
+    if (limitMinor < outstandingMinor) {
+      return json(res, 409, { error: `لا يمكن جعل السقف أقل من الدين الحالي (${fromMinorUnits(outstandingMinor, currency)} ${currency}).` });
+    }
+    const existing = debtLimit(creditor.id, debtor.id, currency);
+    if (existing) {
+      db.prepare("UPDATE agency_credit_limits SET limit_minor=?,updated_at=?,created_by=? WHERE id=?")
+        .run(limitMinor, now(), agent.id, existing.id);
+    } else {
+      db.prepare(`INSERT INTO agency_credit_limits(id,creditor_agency_id,debtor_agency_id,currency,
+        limit_minor,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`)
+        .run(uniqueId("agency_credit_limits", "LIM"), creditor.id, debtor.id, currency, limitMinor, agent.id, now(), now());
+    }
+    if (outstandingMinor >= limitMinor) createDebtLimitNotification(creditor, debtor, currency, outstandingMinor, limitMinor);
+    else closeDebtLimitNotification(creditor.id, debtor.id, currency);
+    audit(agent.id, existing ? "تعديل سقف المديونية" : "إنشاء سقف المديونية", "agency", debtor.id, {
+      creditorAgencyId: creditor.id, currency, limit: fromMinorUnits(limitMinor, currency),
+    });
+    return json(res, 200, { message: "تم حفظ سقف المديونية." });
+  }
+
+  if (req.method === "POST" && pathname === "/api/agent/settlements/ocr") {
+    const viewer = requireRole(req, res, ["agent", "deputy_agent", "assistant_deputy"]);
+    if (!viewer) return;
+    const body = await readJson(req, 1000000);
+    if (!validateIdentityDocument(body.proofDocument)) return json(res, 400, { error: "أرفق صورة إثبات واضحة بحجم مناسب." });
+    return json(res, 200, { text: "", amounts: [], message: "راجع المبلغ والعملة يدوياً قبل التأكيد." });
+  }
+
+  if (req.method === "POST" && pathname === "/api/agent/settlements") {
+    const receiver = requireRole(req, res, ["agent"]);
+    if (!receiver) return;
+    const body = await readJson(req, 1000000);
+    const debtorAgencyId = String(body.counterpartyAgencyId || "").trim();
+    const currency = String(body.currency || "").trim();
+    const amountMinor = toMinorUnits(body.amount, currency);
+    const proofDocument = validateIdentityDocument(body.proofDocument);
+    const debtor = db.prepare("SELECT id,name FROM agencies WHERE id=? AND status='active'").get(debtorAgencyId);
+    const creditor = db.prepare("SELECT id,name FROM agencies WHERE id=? AND status='active'").get(receiver.agencyId);
+    if (!debtor || debtor.id === creditor.id || !supportedCurrencies.has(currency) || !amountMinor || !proofDocument) {
+      return json(res, 400, { error: "أدخل الوكالة والمبلغ والعملة وأرفق إثباتاً صحيحاً." });
+    }
+    const outstandingBefore = agencyDebtMinor(creditor.id, debtor.id, currency);
+    if (amountMinor > outstandingBefore) {
+      return json(res, 409, { error: `المبلغ أكبر من الدين المسجل (${fromMinorUnits(outstandingBefore, currency)} ${currency}).` });
+    }
+    let referenceNumber;
+    do referenceNumber = `SET-${new Date().getUTCFullYear()}-${crypto.randomInt(100000, 1000000)}`;
+    while (db.prepare("SELECT 1 FROM agency_settlements WHERE reference_number=?").get(referenceNumber));
+    const id = uniqueId("agency_settlements", "SET");
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare(`INSERT INTO agency_settlements(id,reference_number,creditor_agency_id,debtor_agency_id,
+        currency,amount_minor,proof_document,proof_ocr_text,created_by,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?)`).run(id, referenceNumber, creditor.id, debtor.id, currency,
+        amountMinor, proofDocument, String(body.ocrText || "").slice(0, 4000), receiver.id, now());
+      db.prepare(`INSERT INTO agency_debt_ledger(id,creditor_agency_id,debtor_agency_id,currency,
+        amount_minor,movement_type,settlement_id,created_by,created_at) VALUES(?,?,?,?,?,'settlement',?,?,?)`)
+        .run(uniqueId("agency_debt_ledger", "DBL"), creditor.id, debtor.id, currency, -amountMinor, id, receiver.id, now());
+      db.exec("COMMIT");
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+    const outstandingAfter = outstandingBefore - amountMinor;
+    const limit = debtLimit(creditor.id, debtor.id, currency);
+    if (!limit || outstandingAfter < limit.limit_minor) closeDebtLimitNotification(creditor.id, debtor.id, currency);
+    audit(receiver.id, "تأكيد استلام تسوية مالية", "settlement", id, {
+      referenceNumber, debtorAgencyId: debtor.id, currency, amount: fromMinorUnits(amountMinor, currency),
+    });
+    return json(res, 201, { message: "تم خصم المبلغ من الدين وحفظ الإثبات. لا يمكن تعديله أو حذفه.", referenceNumber });
+  }
+
+  const reverseSettlement = pathname.match(/^\/api\/owner\/settlements\/([^/]+)\/reverse$/);
+  if (req.method === "POST" && reverseSettlement) {
+    const owner = requireRole(req, res, ["owner"]);
+    if (!owner) return;
+    const body = await readJson(req);
+    const reason = String(body.reason || "").trim();
+    const settlement = db.prepare("SELECT * FROM agency_settlements WHERE id=?").get(reverseSettlement[1]);
+    if (!settlement || settlement.status !== "confirmed") return json(res, 404, { error: "التسوية غير موجودة أو معكوسة مسبقاً." });
+    if (reason.length < 5) return json(res, 400, { error: "اكتب سبب التصحيح بوضوح." });
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("UPDATE agency_settlements SET status='reversed',reversed_by=?,reversed_at=?,reversal_reason=? WHERE id=?")
+        .run(owner.id, now(), reason, settlement.id);
+      db.prepare(`INSERT INTO agency_debt_ledger(id,creditor_agency_id,debtor_agency_id,currency,
+        amount_minor,movement_type,settlement_id,created_by,created_at) VALUES(?,?,?,?,?,'owner_reversal',?,?,?)`)
+        .run(uniqueId("agency_debt_ledger", "DBL"), settlement.creditor_agency_id, settlement.debtor_agency_id,
+          settlement.currency, settlement.amount_minor, settlement.id, owner.id, now());
+      db.exec("COMMIT");
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+    const limit = debtLimit(settlement.creditor_agency_id, settlement.debtor_agency_id, settlement.currency);
+    const outstanding = agencyDebtMinor(settlement.creditor_agency_id, settlement.debtor_agency_id, settlement.currency);
+    if (limit && outstanding >= limit.limit_minor) {
+      const creditor = db.prepare("SELECT id,name FROM agencies WHERE id=?").get(settlement.creditor_agency_id);
+      const debtor = db.prepare("SELECT id,name FROM agencies WHERE id=?").get(settlement.debtor_agency_id);
+      createDebtLimitNotification(creditor, debtor, settlement.currency, outstanding, limit.limit_minor);
+    }
+    audit(owner.id, "عكس تسوية مالية", "settlement", settlement.id, { reason });
+    return json(res, 200, { message: "تم عكس التسوية مع الاحتفاظ بكامل سجل التدقيق." });
+  }
+
   if (req.method === "POST" && pathname === "/api/transfers") {
     const creator = requireRole(req, res, [
       "owner",
@@ -1582,6 +1864,18 @@ async function handleApi(req, res, pathname) {
     }
     const amountMinor = toMinorUnits(body.amount, body.currency);
     if (!amountMinor) return json(res, 400, { error: "صيغة مبلغ الحوالة غير صحيحة." });
+    let manualDebtLimit = null;
+    let outstandingBefore = 0;
+    if (settlementMethod === "manual" && destination && destination.id !== sourceAgency.id) {
+      manualDebtLimit = debtLimit(destination.id, sourceAgency.id, body.currency);
+      outstandingBefore = agencyDebtMinor(destination.id, sourceAgency.id, body.currency);
+      if (manualDebtLimit && outstandingBefore + amountMinor > manualDebtLimit.limit_minor) {
+        return json(res, 409, {
+          error: `لا يمكن إنشاء الحوالة: ستتجاوز وكالتكم سقف الدين مع وكالة ${destination.name}. المستحق ${fromMinorUnits(outstandingBefore, body.currency)} والسقف ${fromMinorUnits(manualDebtLimit.limit_minor, body.currency)} ${body.currency}. يرجى التسديد أولاً.`,
+          code: "DEBT_LIMIT_EXCEEDED",
+        });
+      }
+    }
     const id = uniqueId("transfers", "TR");
     let transferNumber;
     do transferNumber = String(crypto.randomInt(100000, 1000000));
@@ -1639,6 +1933,13 @@ async function handleApi(req, res, pathname) {
         ledgerInsert.run(uniqueId("liquidity_ledger", "LIQ"), destination.id, body.currency,
           amountMinor, destinationBefore, destinationAfter, "transfer_credit", id, sourceAgency.id,
           idempotencyKey + ":credit", "استلام حوالة في رصيد السيولة", creator.id, now());
+      } else if (destination && destination.id !== sourceAgency.id) {
+        db.prepare(`INSERT INTO agency_debt_ledger(id,creditor_agency_id,debtor_agency_id,currency,
+          amount_minor,movement_type,transfer_id,created_by,created_at)
+          VALUES(?,?,?,?,?,'transfer',?,?,?)`).run(
+          uniqueId("agency_debt_ledger", "DBL"), destination.id, sourceAgency.id,
+          body.currency, amountMinor, id, creator.id, now(),
+        );
       }
       db.exec("COMMIT");
     } catch (error) {
@@ -1649,6 +1950,12 @@ async function handleApi(req, res, pathname) {
         if (repeated) return json(res, 200, { message: "تم إنشاء هذه الحوالة مسبقاً.", id: repeated.id, transferNumber: repeated.transfer_number, duplicate: true });
       }
       throw error;
+    }
+    if (manualDebtLimit && outstandingBefore + amountMinor >= manualDebtLimit.limit_minor) {
+      createDebtLimitNotification(
+        destination, sourceAgency, body.currency,
+        outstandingBefore + amountMinor, manualDebtLimit.limit_minor,
+      );
     }
     audit(creator.id, "إنشاء حوالة", "transfer", id, { transferNumber });
     return json(res, 201, {
