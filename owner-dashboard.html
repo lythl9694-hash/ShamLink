@@ -27,11 +27,36 @@
         </p>
         <div class="employee-list" id="pendingAgents"></div>
       </section>
+      <section class="panel owner-only">
+        <h2>مساعدو صاحب المنصة — Super Admin</h2>
+        <p class="meta">عيّن حساباً مفعّلاً بواسطة معرّفه. إدارة السيولة وتعيين المساعدين تبقى حصراً لصاحب المنصة.</p>
+        <form id="superAdminForm" class="agency-picker">
+          <input id="superAdminUserId" placeholder="معرّف الحساب USR أو EMP" required />
+          <button type="submit">تعيين Super Admin</button>
+        </form>
+        <div id="superAdminList" class="employee-list" style="margin-top:16px"></div>
+      </section>
+      <section class="panel" id="announcementManagement">
+        <h2>نشر إعلان</h2>
+        <p class="meta">النشر لصاحب المنصة، أو لـ Super Admin بعد تشغيل الصلاحية له.</p>
+        <form id="announcementForm">
+          <label for="announcementTitle">عنوان الإعلان</label><input id="announcementTitle" maxlength="120" required />
+          <label for="announcementBody">نص الإعلان</label><textarea id="announcementBody" maxlength="2000" required></textarea>
+          <div class="liquidity-form">
+            <div><label for="announcementAudience">المستلمون</label><select id="announcementAudience"><option value="all">الجميع</option><option value="agents">الوكلاء</option><option value="employees">الموظفون</option><option value="clients">المستخدمون</option></select></div>
+            <div><label for="announcementPriority">الأهمية</label><select id="announcementPriority"><option value="normal">عادي</option><option value="important">مهم</option><option value="urgent">عاجل</option></select></div>
+            <div><label for="announcementEndsAt">تاريخ الانتهاء (اختياري)</label><input id="announcementEndsAt" type="datetime-local" /></div>
+            <button type="submit">نشر الإعلان</button>
+          </div>
+        </form>
+        <div id="announcementManagementNotice" class="notice" hidden></div>
+        <div id="managedAnnouncements" class="ledger-list" style="margin-top:16px"></div>
+      </section>
       <section class="panel" id="agenciesSection">
         <h2>الوكالات</h2>
         <div class="agency-list" id="agencyList"></div>
       </section>
-      <section class="panel">
+      <section class="panel owner-only">
         <h2>إدارة سيولة الوكالات</h2>
         <p class="meta">أضف أو اخصم رصيداً محاسبياً باستخدام معرّف الوكالة. تُسجّل كل حركة ولا يمكن حذفها.</p>
         <form id="liquidityForm" class="liquidity-form">
@@ -62,6 +87,7 @@
       <section class="panel employee-detail" id="employeeDetail"></section>
     </main>
     <script src="dashboard.js?v=20260904-3"></script>
-    <script src="admin-accounts.js?v=20260904-3"></script>
+    <script src="admin-accounts.js?v=20260904-4"></script>
+    <script src="announcements.js?v=20260904-1"></script>
   </body>
 </html>
