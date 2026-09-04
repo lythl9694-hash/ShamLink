@@ -19,16 +19,9 @@
       </div>
     </header>
     <main class="container">
-      <div class="notice">
-        حاليًا يتم اختيار الوكالة بمعرّفها. عند إضافة تسجيل الدخول ستفتح لوحة كل
-        وكيل تلقائيًا ولن يرى غير بيانات وكالته.
-      </div>
-      <section class="panel">
-        <h2>اختيار الوكالة</h2>
-        <div class="agency-picker"><select id="agencyPicker"></select></div>
-      </section>
+      <section class="panel" id="agencyProfile"></section>
       <section class="stats" id="stats"></section>
-      <section class="panel">
+      <section class="panel agent-only">
         <h2>دعوة موظف جديد</h2>
         <p class="meta">
           أنشئ رابط دعوة وأرسله للموظف. تنتهي صلاحيته بعد 72 ساعة ويُستخدم مرة
@@ -37,7 +30,7 @@
         <button type="button" id="createInvite">إنشاء رابط دعوة</button>
         <div id="inviteResult" class="notice" hidden></div>
       </section>
-      <section class="panel">
+      <section class="panel agent-only">
         <h2>طلبات الموظفين</h2>
         <div class="employee-list" id="pendingEmployees"></div>
       </section>
@@ -56,7 +49,7 @@
       </section>
       <section class="panel employee-detail" id="employeeDetail"></section>
     </main>
-    <script src="dashboard.js"></script>
-    <script src="admin-accounts.js"></script>
+    <script src="dashboard.js?v=20260904-2"></script>
+    <script src="admin-accounts.js?v=20260904-2"></script>
   </body>
 </html>
