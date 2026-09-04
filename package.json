@@ -4,7 +4,7 @@
   "private": true,
   "description": "منصة شام لينك لإدارة الوكالات والحوالات",
   "scripts": {
-    "start": "node server.js",
+    "start": "node --env-file-if-exists=.env server.js",
     "check": "node --check server.js && node --check dashboard.js && node --check account.js && node --check admin-accounts.js"
   },
   "engines": {
