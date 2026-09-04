@@ -1,19 +1,15 @@
 (function () {
   const mode = document.body.dataset.mode;
-  const transfers = JSON.parse(
-    localStorage.getItem("shamlink_transfers") || "[]",
-  );
-  const savedAgencies = JSON.parse(
-    localStorage.getItem("shamlink_agency_profiles") || "{}",
-  );
-  const savedEmployees = JSON.parse(
-    localStorage.getItem("shamlink_employee_profiles") || "{}",
-  );
+  let state = { viewer: null, agencies: [] };
+  let activeAgency = null;
 
-  function normalize(value) {
-    return String(value || "")
-      .trim()
-      .toLowerCase();
+  async function api(path) {
+    const response = await fetch(path, {
+      headers: { Accept: "application/json" },
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "تعذر تحميل البيانات.");
+    return data;
   }
 
   function escapeHtml(value) {
@@ -25,297 +21,259 @@
       .replaceAll("'", "&#039;");
   }
 
-  function buildAgencies() {
-    const agencies = { ...savedAgencies };
-    transfers.forEach(function (transfer) {
-      if (transfer.sourceAgencyId) {
-        agencies[transfer.sourceAgencyId] = {
-          id: transfer.sourceAgencyId,
-          name: transfer.source,
-        };
-      }
-    });
-    return Object.values(agencies);
-  }
-
-  function buildEmployees() {
-    const employees = { ...savedEmployees };
-    transfers.forEach(function (transfer) {
-      if (transfer.creatorEmployeeId) {
-        employees[transfer.creatorEmployeeId] = {
-          ...(employees[transfer.creatorEmployeeId] || {}),
-          id: transfer.creatorEmployeeId,
-          name: transfer.createdBy || "غير مسجل",
-          phone: transfer.createdByPhone || "",
-          agencyId: transfer.sourceAgencyId || "",
-        };
-      }
-      if (transfer.employeeId) {
-        employees[transfer.employeeId] = {
-          ...(employees[transfer.employeeId] || {}),
-          id: transfer.employeeId,
-          name: transfer.deliveredBy || "غير مسجل",
-        };
-      }
-    });
-    return Object.values(employees);
-  }
-
-  const agencies = buildAgencies();
-  const employees = buildEmployees();
-  let activeAgencyId = "";
-
-  function agencyById(id) {
-    return agencies.find((agency) => agency.id === id);
-  }
-
-  function transfersForAgency(agencyId) {
-    const agency = agencyById(agencyId);
-    if (!agency) return [];
-    return transfers.filter(
-      (transfer) =>
-        transfer.sourceAgencyId === agencyId ||
-        normalize(transfer.destination) === normalize(agency.name),
+  function roleName(role) {
+    return (
+      {
+        agent: "وكيل",
+        deputy_agent: "نائب الوكيل",
+        assistant_deputy: "مساعد نائب الوكيل",
+        employee: "موظف",
+      }[role] || role
     );
   }
 
-  function employeesForAgency(agencyId) {
-    const relatedTransfers = transfersForAgency(agencyId);
-    const ids = new Set();
-    employees.forEach(function (employee) {
-      if (employee.agencyId === agencyId) ids.add(employee.id);
-    });
-    relatedTransfers.forEach(function (transfer) {
-      if (transfer.sourceAgencyId === agencyId && transfer.creatorEmployeeId) {
-        ids.add(transfer.creatorEmployeeId);
-      }
-      const agency = agencyById(agencyId);
-      if (
-        agency &&
-        normalize(transfer.destination) === normalize(agency.name) &&
-        transfer.employeeId
-      ) {
-        ids.add(transfer.employeeId);
-      }
-    });
-    return employees.filter((employee) => ids.has(employee.id));
-  }
-
-  function currentEmployees() {
-    return mode === "agent" ? employeesForAgency(activeAgencyId) : employees;
-  }
-
-  function currentTransfers() {
-    return mode === "agent" ? transfersForAgency(activeAgencyId) : transfers;
-  }
-
-  function renderStats() {
-    const visibleTransfers = currentTransfers();
-    const visibleEmployees = currentEmployees();
-    const outgoing =
-      mode === "agent"
-        ? visibleTransfers.filter(
-            (item) => item.sourceAgencyId === activeAgencyId,
-          )
-        : visibleTransfers;
-    const delivered = visibleTransfers.filter(
-      (item) => item.status === "تم التسليم",
+  function stat(label, value) {
+    return (
+      '<div class="stat"><span>' +
+      escapeHtml(label) +
+      "</span><strong>" +
+      Number(value || 0) +
+      "</strong></div>"
     );
-    document.getElementById("stats").innerHTML =
-      '<div class="stat"><span>الوكالات</span><strong>' +
-      (mode === "agent" ? (activeAgencyId ? 1 : 0) : agencies.length) +
-      '</strong></div><div class="stat"><span>الموظفون</span><strong>' +
-      visibleEmployees.length +
-      '</strong></div><div class="stat"><span>الحوالات الصادرة</span><strong>' +
-      outgoing.length +
-      '</strong></div><div class="stat"><span>الحوالات المسلّمة</span><strong>' +
-      delivered.length +
-      "</strong></div>";
+  }
+
+  function renderLevel(agency) {
+    const details = agency.levelPrivate;
+    return (
+      '<div class="level-card"><div class="level-number">Level ' +
+      escapeHtml(agency.level) +
+      "</div>" +
+      (details
+        ? '<div class="progress-track"><span style="width:' +
+          Number(details.progress || 0) +
+          '%"></span></div><div class="level-private">التقدم: ' +
+          Number(details.progress || 0) +
+          "% · إجمالي أرباح العمولات: $" +
+          Number(details.profitUsd || 0).toFixed(2) +
+          (details.max
+            ? " · الحد الأقصى"
+            : " · المتبقي للمستوى التالي: $" +
+              Number(details.remainingUsd || 0).toFixed(2)) +
+          "</div>"
+        : "") +
+      "</div>"
+    );
+  }
+
+  function renderStats(agency) {
+    const element = document.getElementById("stats");
+    if (!element) return;
+    if (mode === "owner" && !agency) {
+      element.innerHTML =
+        stat("الوكالات", state.agencies.length) +
+        stat(
+          "الموظفون",
+          state.agencies.reduce((sum, item) => sum + item.employees.length, 0),
+        ) +
+        stat(
+          "الحوالات المرتبطة",
+          state.agencies.reduce((sum, item) => sum + item.counts.total, 0),
+        ) +
+        stat(
+          "الحوالات المسلّمة",
+          state.agencies.reduce((sum, item) => sum + item.counts.delivered, 0),
+        );
+      return;
+    }
+    element.innerHTML = agency
+      ? stat("الموظفون", agency.employees.length) +
+        stat("الحوالات الصادرة", agency.counts.outgoing) +
+        stat("الحوالات الواردة", agency.counts.incoming) +
+        stat("الحوالات المسلّمة", agency.counts.delivered)
+      : stat("الوكالات", 0);
+  }
+
+  function renderAgencyProfile(agency) {
+    const title = document.getElementById("activeAgency");
+    if (title)
+      title.textContent = agency
+        ? agency.name + " — " + agency.id
+        : "لا توجد وكالة مفعّلة";
+    const profile = document.getElementById("agencyProfile");
+    if (!profile) return;
+    profile.innerHTML = agency
+      ? '<div class="agency-identity"><div class="agent-mark">وكيل</div><div><h2>' +
+        escapeHtml(agency.name) +
+        '</h2><div class="badge">' +
+        escapeHtml(agency.id) +
+        "</div><p>" +
+        escapeHtml(agency.badge) +
+        "</p></div></div>" +
+        renderLevel(agency)
+      : '<p class="empty">لا توجد وكالة مرتبطة بهذا الحساب.</p>';
   }
 
   function renderAgencies() {
-    const section = document.getElementById("agenciesSection");
-    if (!section) return;
     const list = document.getElementById("agencyList");
-    if (!agencies.length) {
-      list.innerHTML = '<p class="empty">لا توجد وكالات مسجلة بعد.</p>';
-      return;
-    }
-    list.innerHTML = agencies
-      .map(function (agency) {
-        const agencyTransfers = transfersForAgency(agency.id);
-        return (
-          '<article class="employee-card"><h3>' +
-          escapeHtml(agency.name) +
-          '</h3><div class="meta">المعرّف: <span class="badge">' +
-          escapeHtml(agency.id) +
-          "</span><br>عدد الموظفين: " +
-          employeesForAgency(agency.id).length +
-          "<br>الحوالات المرتبطة: " +
-          agencyTransfers.length +
-          '</div><a href="agent-dashboard.html?agency=' +
-          encodeURIComponent(agency.id) +
-          '" class="home-link" style="display:block;background:#07875f;text-align:center;margin-top:10px">فتح لوحة الوكالة</a></article>'
-        );
-      })
-      .join("");
+    if (!list) return;
+    list.innerHTML = state.agencies.length
+      ? state.agencies
+          .map(
+            (agency) =>
+              '<article class="employee-card"><div class="agent-mark small">وكيل</div><h3>' +
+              escapeHtml(agency.name) +
+              '</h3><div class="meta"><span class="badge">' +
+              escapeHtml(agency.id) +
+              "</span><br>Level " +
+              escapeHtml(agency.level) +
+              "<br>الموظفون: " +
+              agency.employees.length +
+              "<br>الحوالات: " +
+              agency.counts.total +
+              '</div><a class="open-agency" href="agent-dashboard.html?agency=' +
+              encodeURIComponent(agency.id) +
+              '">فتح ملف الوكالة</a></article>',
+          )
+          .join("")
+      : '<p class="empty">لا توجد وكالات مفعّلة بعد.</p>';
   }
 
-  function renderEmployees(query) {
-    const text = normalize(query);
-    const filtered = currentEmployees().filter(
+  function visibleEmployees() {
+    return mode === "owner"
+      ? state.agencies.flatMap((agency) =>
+          agency.employees.map((employee) => ({ ...employee, agency })),
+        )
+      : (activeAgency?.employees || []).map((employee) => ({
+          ...employee,
+          agency: activeAgency,
+        }));
+  }
+
+  function renderEmployees(query = "") {
+    const list = document.getElementById("employeeList");
+    if (!list) return;
+    const text = String(query).trim().toLowerCase();
+    const employees = visibleEmployees().filter(
       (employee) =>
         !text ||
-        normalize(employee.name).includes(text) ||
-        normalize(employee.id).includes(text) ||
-        normalize(employee.phone).includes(text),
+        String(employee.name).toLowerCase().includes(text) ||
+        String(employee.id).toLowerCase().includes(text) ||
+        String(employee.phone).includes(text),
     );
-    const list = document.getElementById("employeeList");
-    if (!filtered.length) {
-      list.innerHTML = '<p class="empty">لا يوجد موظف مطابق للبحث.</p>';
-      return;
-    }
-    list.innerHTML = filtered
-      .map(function (employee) {
-        const agency = agencyById(employee.agencyId);
-        return (
-          '<article class="employee-card"><h3>' +
-          escapeHtml(employee.name || "غير مسجل") +
-          '</h3><div class="meta"><span class="badge">' +
-          escapeHtml(employee.id) +
-          "</span><br>الجوال: " +
-          escapeHtml(employee.phone || "غير مسجل") +
-          "<br>الوكالة: " +
-          escapeHtml(agency?.name || "غير محددة") +
-          '</div><button type="button" data-employee-id="' +
-          escapeHtml(employee.id) +
-          '">فتح سجل الموظف</button></article>'
-        );
-      })
-      .join("");
+    list.innerHTML = employees.length
+      ? employees
+          .map(
+            (employee) =>
+              '<article class="employee-card"><h3>' +
+              escapeHtml(employee.name) +
+              '</h3><div class="meta"><span class="badge">' +
+              escapeHtml(employee.id) +
+              "</span><br>" +
+              escapeHtml(roleName(employee.role)) +
+              " · " +
+              escapeHtml(employee.phone) +
+              "<br>" +
+              escapeHtml(employee.agency.name) +
+              '</div><button type="button" data-employee-id="' +
+              escapeHtml(employee.id) +
+              '">فتح سجل الموظف</button></article>',
+          )
+          .join("")
+      : '<p class="empty">لا يوجد موظف مطابق للبحث.</p>';
   }
 
   function transferCard(transfer, action) {
     return (
       '<article class="transfer-card"><h4>حوالة رقم ' +
-      escapeHtml(transfer.code) +
+      escapeHtml(transfer.transfer_number) +
       '</h4><div class="meta">' +
       action +
-      "<br>من: " +
-      escapeHtml(transfer.source) +
-      " — إلى: " +
-      escapeHtml(transfer.destination) +
       "<br>المستلم: " +
-      escapeHtml(transfer.receiver) +
+      escapeHtml(transfer.receiver_name) +
       "<br>المبلغ: " +
       escapeHtml(transfer.amount) +
       " " +
       escapeHtml(transfer.currency) +
+      "<br>الوجهة: " +
+      escapeHtml(transfer.destination_name) +
       "<br>الحالة: " +
-      escapeHtml(transfer.status || "قيد الانتظار") +
+      escapeHtml(transfer.status) +
       "<br>التاريخ: " +
-      escapeHtml(action === "تسليم" ? transfer.deliveredAt : transfer.date) +
+      escapeHtml(
+        new Date(transfer.delivered_at || transfer.created_at).toLocaleString(
+          "ar",
+        ),
+      ) +
       "</div></article>"
     );
   }
 
-  function openEmployee(employeeId) {
-    const employee = employees.find((item) => item.id === employeeId);
-    if (!employee) return;
-    const created = transfers.filter(
-      (transfer) => transfer.creatorEmployeeId === employeeId,
-    );
-    const delivered = transfers.filter(
-      (transfer) => transfer.employeeId === employeeId,
-    );
-    const agency = agencyById(employee.agencyId);
-    document.getElementById("employeeDetail").innerHTML =
-      '<div class="detail-header"><div><h2>' +
-      escapeHtml(employee.name || "ملف الموظف") +
-      '</h2><div class="meta"><span class="badge">' +
-      escapeHtml(employee.id) +
-      "</span> · " +
-      escapeHtml(employee.phone || "رقم غير مسجل") +
-      " · " +
-      escapeHtml(agency?.name || "وكالة غير محددة") +
-      '</div></div><button type="button" id="closeDetail">إغلاق الملف</button></div>' +
-      '<div class="stats" style="margin-top:18px"><div class="stat"><span>أنشأ حوالات</span><strong>' +
-      created.length +
-      '</strong></div><div class="stat"><span>سلّم حوالات</span><strong>' +
-      delivered.length +
-      '</strong></div></div><div class="two-columns"><section><h3>الحوالات التي أنشأها</h3><div class="transfer-list">' +
-      (created.length
-        ? created.map((item) => transferCard(item, "إنشاء")).join("")
-        : '<p class="empty">لا توجد حوالات منشأة.</p>') +
-      '</div></section><section><h3>الحوالات التي سلّمها</h3><div class="transfer-list">' +
-      (delivered.length
-        ? delivered.map((item) => transferCard(item, "تسليم")).join("")
-        : '<p class="empty">لا توجد حوالات مسلّمة.</p>') +
-      "</div></section></div>";
-    document.getElementById("employeeDetail").classList.add("visible");
-    document
-      .getElementById("employeeDetail")
-      .scrollIntoView({ behavior: "smooth" });
-    document.getElementById("closeDetail").onclick = function () {
-      document.getElementById("employeeDetail").classList.remove("visible");
-    };
-  }
-
-  function chooseAgency(id) {
-    activeAgencyId = id;
-    const agency = agencyById(id);
-    const title = document.getElementById("activeAgency");
-    title.textContent = agency
-      ? agency.name + " — " + agency.id
-      : "اختر الوكالة لعرض بياناتها";
-    if (agency) {
-      localStorage.setItem("shamlink_active_agency_id", agency.id);
-      const url = new URL(window.location.href);
-      url.searchParams.set("agency", agency.id);
-      history.replaceState({}, "", url);
+  async function openEmployee(employeeId) {
+    const detail = document.getElementById("employeeDetail");
+    detail.classList.add("visible");
+    detail.innerHTML = '<p class="empty">جارٍ تحميل سجل الموظف…</p>';
+    try {
+      const data = await api(
+        "/api/employees/" + encodeURIComponent(employeeId) + "/transfers",
+      );
+      detail.innerHTML =
+        '<div class="detail-header"><div><h2>' +
+        escapeHtml(data.employee.name) +
+        '</h2><div class="meta"><span class="badge">' +
+        escapeHtml(data.employee.id) +
+        "</span> · " +
+        escapeHtml(data.employee.phone) +
+        " · " +
+        escapeHtml(roleName(data.employee.role)) +
+        '</div></div><button type="button" id="closeDetail">إغلاق الملف</button></div><div class="stats" style="margin-top:18px">' +
+        stat("أنشأ حوالات", data.created.length) +
+        stat("سلّم حوالات", data.delivered.length) +
+        '</div><div class="two-columns"><section><h3>الحوالات التي أنشأها</h3><div class="transfer-list">' +
+        (data.created.length
+          ? data.created.map((item) => transferCard(item, "إنشاء")).join("")
+          : '<p class="empty">لا توجد حوالات منشأة.</p>') +
+        '</div></section><section><h3>الحوالات التي سلّمها</h3><div class="transfer-list">' +
+        (data.delivered.length
+          ? data.delivered.map((item) => transferCard(item, "تسليم")).join("")
+          : '<p class="empty">لا توجد حوالات مسلّمة.</p>') +
+        "</div></section></div>";
+      document.getElementById("closeDetail").onclick = () =>
+        detail.classList.remove("visible");
+      detail.scrollIntoView({ behavior: "smooth" });
+    } catch (error) {
+      detail.innerHTML =
+        '<p class="empty">' + escapeHtml(error.message) + "</p>";
     }
-    renderStats();
-    renderEmployees(document.getElementById("employeeSearch").value);
   }
 
-  if (mode === "agent") {
-    const picker = document.getElementById("agencyPicker");
-    picker.innerHTML =
-      '<option value="">اختر معرف الوكالة</option>' +
-      agencies
-        .map(
-          (agency) =>
-            '<option value="' +
-            escapeHtml(agency.id) +
-            '">' +
-            escapeHtml(agency.name) +
-            " — " +
-            escapeHtml(agency.id) +
-            "</option>",
-        )
-        .join("");
-    picker.addEventListener("change", () => chooseAgency(picker.value));
-    const requested =
-      new URLSearchParams(window.location.search).get("agency") ||
-      localStorage.getItem("shamlink_active_agency_id") ||
-      "";
-    if (agencyById(requested)) {
-      picker.value = requested;
-      chooseAgency(requested);
+  async function start() {
+    try {
+      state = await api("/api/dashboard");
+      if (mode === "agent") {
+        const requested = new URLSearchParams(location.search).get("agency");
+        activeAgency =
+          state.agencies.find((agency) => agency.id === requested) ||
+          state.agencies[0] ||
+          null;
+        renderAgencyProfile(activeAgency);
+      }
+      renderStats(activeAgency);
+      renderAgencies();
+      renderEmployees();
+    } catch (error) {
+      document.getElementById("stats").innerHTML =
+        '<p class="empty">' + escapeHtml(error.message) + "</p>";
     }
   }
 
   document
     .getElementById("employeeSearch")
-    .addEventListener("input", (event) => {
-      renderEmployees(event.target.value);
+    ?.addEventListener("input", (event) => renderEmployees(event.target.value));
+  document
+    .getElementById("employeeList")
+    ?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-employee-id]");
+      if (button) openEmployee(button.dataset.employeeId);
     });
-  document.getElementById("employeeList").addEventListener("click", (event) => {
-    const button = event.target.closest("[data-employee-id]");
-    if (button) openEmployee(button.dataset.employeeId);
-  });
-
-  renderAgencies();
-  renderStats();
-  renderEmployees("");
+  start();
 })();
