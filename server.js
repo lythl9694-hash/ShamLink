@@ -216,6 +216,8 @@ ensureColumn("transfers", "delivery_address", "TEXT");
 ensureColumn("transfers", "notes", "TEXT");
 ensureColumn("transfers", "settlement_method", "TEXT NOT NULL DEFAULT 'manual'");
 ensureColumn("transfers", "idempotency_key", "TEXT");
+ensureColumn("users", "profile_photo", "TEXT");
+ensureColumn("users", "profile_bio", "TEXT");
 db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_transfers_idempotency ON transfers(idempotency_key) WHERE idempotency_key IS NOT NULL;");
 db.prepare(
   "INSERT OR IGNORE INTO settings(key,value,updated_at) VALUES('exchange_rates',?,?)",
@@ -226,6 +228,9 @@ db.prepare(
 db.prepare(
   "INSERT OR IGNORE INTO settings(key,value,updated_at) VALUES('sms_validity_hours',?,?)",
 ).run(JSON.stringify(24), now());
+db.prepare(
+  "INSERT OR IGNORE INTO settings(key,value,updated_at) VALUES('support_contacts',?,?)",
+).run(JSON.stringify({ whatsapp: { enabled: false, value: "" }, telegram: { enabled: false, value: "" } }), now());
 db.exec("PRAGMA optimize;");
 
 const publicFiles = new Set([
@@ -236,6 +241,7 @@ const publicFiles = new Set([
   "/account.js",
   "/dashboard.css",
   "/announcements.js",
+  "/support.js",
 ]);
 const rolePages = {
   "/owner-dashboard.html": ["owner", "super_admin"],
@@ -246,6 +252,8 @@ const rolePages = {
     "deputy_agent",
     "assistant_deputy",
   ],
+  "/profile.html": ["owner", "super_admin", "agent", "deputy_agent", "assistant_deputy", "employee", "client"],
+  "/profile.js": ["owner", "super_admin", "agent", "deputy_agent", "assistant_deputy", "employee", "client"],
   "/transfers.html": [
     "owner",
     "agent",
@@ -404,11 +412,11 @@ function json(res, status, data, headers = {}) {
   res.end(JSON.stringify(data));
 }
 
-async function readJson(req) {
+async function readJson(req, maxBytes = 100000) {
   let body = "";
   for await (const chunk of req) {
     body += chunk;
-    if (body.length > 100000) throw new Error("الطلب كبير جداً");
+    if (body.length > maxBytes) throw new Error("الطلب كبير جداً");
   }
   return body ? JSON.parse(body) : {};
 }
@@ -579,6 +587,12 @@ async function handleApi(req, res, pathname) {
     });
   }
 
+  if (req.method === "GET" && pathname === "/api/support") {
+    const row = db.prepare("SELECT value FROM settings WHERE key='support_contacts'").get();
+    const contacts = row ? JSON.parse(row.value) : {};
+    return json(res, 200, { contacts });
+  }
+
   if (req.method === "POST" && pathname === "/api/auth/setup-owner") {
     if (db.prepare("SELECT 1 FROM users WHERE role='owner'").get()) {
       return json(res, 409, { error: "تم إنشاء حساب صاحب المنصة مسبقاً." });
@@ -737,6 +751,41 @@ async function handleApi(req, res, pathname) {
       { message: "تم تسجيل الخروج." },
       { "Set-Cookie": sessionCookie("", 0) },
     );
+  }
+
+  if (req.method === "GET" && pathname === "/api/profile") {
+    const viewer = requireRole(req, res, ["owner", "super_admin", "agent", "deputy_agent", "assistant_deputy", "employee", "client"]);
+    if (!viewer) return;
+    const profile = db.prepare(`SELECT u.id,u.name,u.phone,u.role,u.status,u.agency_id AS agencyId,
+      u.profile_photo AS profilePhoto,u.profile_bio AS profileBio,a.name AS agencyName
+      FROM users u LEFT JOIN agencies a ON a.id=u.agency_id WHERE u.id=?`).get(viewer.id);
+    return json(res, 200, { profile });
+  }
+
+  if (req.method === "POST" && pathname === "/api/profile") {
+    const viewer = requireRole(req, res, ["owner", "super_admin", "agent", "deputy_agent", "assistant_deputy", "employee", "client"]);
+    if (!viewer) return;
+    const body = await readJson(req, 550000);
+    const photo = String(body.profilePhoto || "");
+    const bio = String(body.profileBio || "").trim();
+    if (bio.length > 300) return json(res, 400, { error: "النبذة يجب ألا تتجاوز 300 حرف." });
+    if (photo) {
+      const match = photo.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+      if (!match) return json(res, 400, { error: "صيغة الصورة غير مدعومة." });
+      const bytes = Buffer.from(match[2], "base64");
+      if (!bytes.length || bytes.length > 350000) return json(res, 413, { error: "حجم الصورة كبير. اختر صورة أصغر." });
+    }
+    db.prepare("UPDATE users SET profile_photo=?,profile_bio=? WHERE id=?").run(photo || null, bio || null, viewer.id);
+    audit(viewer.id, "تحديث الملف الشخصي", "user", viewer.id, { photoChanged: Boolean(photo) });
+    return json(res, 200, { message: "تم حفظ الملف الشخصي." });
+  }
+
+  if (req.method === "DELETE" && pathname === "/api/profile/photo") {
+    const viewer = requireRole(req, res, ["owner", "super_admin", "agent", "deputy_agent", "assistant_deputy", "employee", "client"]);
+    if (!viewer) return;
+    db.prepare("UPDATE users SET profile_photo=NULL WHERE id=?").run(viewer.id);
+    audit(viewer.id, "حذف الصورة الشخصية", "user", viewer.id);
+    return json(res, 200, { message: "تم حذف الصورة الشخصية." });
   }
 
   if (req.method === "GET" && pathname === "/api/owner/super-admins") {
@@ -1110,6 +1159,7 @@ async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/settings") {
     const viewer = requireRole(req, res, [
       "owner",
+      "super_admin",
       "agent",
       "deputy_agent",
       "assistant_deputy",
@@ -1121,6 +1171,30 @@ async function handleApi(req, res, pathname) {
       rows.map((row) => [row.key, JSON.parse(row.value)]),
     );
     return json(res, 200, { settings });
+  }
+
+  if (req.method === "POST" && pathname === "/api/owner/support") {
+    const owner = requireRole(req, res, ["owner"]);
+    if (!owner) return;
+    const body = await readJson(req);
+    const whatsappValue = String(body.whatsapp?.value || "").trim();
+    const telegramValue = String(body.telegram?.value || "").trim();
+    if (whatsappValue.length > 100 || telegramValue.length > 100) return json(res, 400, { error: "بيانات الدعم طويلة جداً." });
+    if (body.whatsapp?.enabled && !/^(?:https:\/\/wa\.me\/)?\+?[0-9]{7,20}$/.test(whatsappValue)) {
+      return json(res, 400, { error: "أدخل رقم واتساب مع رمز الدولة، مثل +905xxxxxxxxx." });
+    }
+    if (body.telegram?.enabled && !/^(?:https:\/\/t\.me\/)?@?[A-Za-z0-9_]{5,32}$/.test(telegramValue)) {
+      return json(res, 400, { error: "أدخل اسم مستخدم تلغرام أو رابط t.me صحيحاً." });
+    }
+    const contacts = {
+      whatsapp: { enabled: body.whatsapp?.enabled === true, value: whatsappValue },
+      telegram: { enabled: body.telegram?.enabled === true, value: telegramValue },
+    };
+    db.prepare(`INSERT INTO settings(key,value,updated_at,updated_by) VALUES('support_contacts',?,?,?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,updated_by=excluded.updated_by`)
+      .run(JSON.stringify(contacts), now(), owner.id);
+    audit(owner.id, "تحديث قنوات الدعم الفني", "settings", "support_contacts", { whatsappEnabled: contacts.whatsapp.enabled, telegramEnabled: contacts.telegram.enabled });
+    return json(res, 200, { message: "تم حفظ إعدادات الدعم الفني.", contacts });
   }
 
   if (req.method === "GET" && pathname === "/api/market-rates") {
