@@ -94,6 +94,33 @@ db.exec(`
     FOREIGN KEY (created_by) REFERENCES users(id),
     FOREIGN KEY (delivered_by) REFERENCES users(id)
   );
+  CREATE TABLE IF NOT EXISTS agency_balances (
+    agency_id TEXT NOT NULL,
+    currency TEXT NOT NULL CHECK (currency IN ('USD','SYP','TRY','EUR')),
+    balance_minor INTEGER NOT NULL DEFAULT 0 CHECK (balance_minor >= 0),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (agency_id, currency),
+    FOREIGN KEY (agency_id) REFERENCES agencies(id)
+  );
+  CREATE TABLE IF NOT EXISTS liquidity_ledger (
+    id TEXT PRIMARY KEY,
+    agency_id TEXT NOT NULL,
+    currency TEXT NOT NULL CHECK (currency IN ('USD','SYP','TRY','EUR')),
+    amount_minor INTEGER NOT NULL,
+    balance_before_minor INTEGER NOT NULL,
+    balance_after_minor INTEGER NOT NULL CHECK (balance_after_minor >= 0),
+    movement_type TEXT NOT NULL,
+    transfer_id TEXT,
+    counterparty_agency_id TEXT,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    reason TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (agency_id) REFERENCES agencies(id),
+    FOREIGN KEY (transfer_id) REFERENCES transfers(id),
+    FOREIGN KEY (counterparty_agency_id) REFERENCES agencies(id),
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  );
   CREATE INDEX IF NOT EXISTS idx_users_status_role ON users(status, role);
   CREATE INDEX IF NOT EXISTS idx_users_agency ON users(agency_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
@@ -101,6 +128,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_transfers_destination ON transfers(destination_agency_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_transfers_created_by ON transfers(created_by, created_at);
   CREATE INDEX IF NOT EXISTS idx_transfers_delivered_by ON transfers(delivered_by, delivered_at);
+  CREATE INDEX IF NOT EXISTS idx_liquidity_ledger_agency ON liquidity_ledger(agency_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_liquidity_ledger_transfer ON liquidity_ledger(transfer_id);
 `);
 
 // Keep existing development databases compatible as transfer verification evolves.
@@ -120,6 +149,9 @@ ensureColumn("transfers", "code_channel", "TEXT");
 ensureColumn("transfers", "recipient_id", "TEXT");
 ensureColumn("transfers", "delivery_address", "TEXT");
 ensureColumn("transfers", "notes", "TEXT");
+ensureColumn("transfers", "settlement_method", "TEXT NOT NULL DEFAULT 'manual'");
+ensureColumn("transfers", "idempotency_key", "TEXT");
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_transfers_idempotency ON transfers(idempotency_key) WHERE idempotency_key IS NOT NULL;");
 db.prepare(
   "INSERT OR IGNORE INTO settings(key,value,updated_at) VALUES('exchange_rates',?,?)",
 ).run(JSON.stringify({ USD: 1, EUR: 1, TRY: 0, SYP: 0 }), now());
@@ -176,6 +208,49 @@ function now() {
 
 function normalizePhone(phone) {
   return String(phone || "").replace(/[^0-9+]/g, "");
+}
+
+const supportedCurrencies = new Set(["USD", "SYP", "TRY", "EUR"]);
+
+function currencyDecimals(currency) {
+  return currency === "SYP" ? 0 : 2;
+}
+
+function toMinorUnits(value, currency) {
+  const text = String(value ?? "").trim();
+  const decimals = currencyDecimals(currency);
+  const match = text.match(/^(\d+)(?:\.(\d+))?$/);
+  if (!match || (match[2] || "").length > decimals) return null;
+  const factor = 10 ** decimals;
+  const whole = Number(match[1]);
+  const fraction = Number((match[2] || "").padEnd(decimals, "0") || 0);
+  const minor = whole * factor + fraction;
+  return Number.isSafeInteger(minor) && minor > 0 ? minor : null;
+}
+
+function fromMinorUnits(value, currency) {
+  return Number(value || 0) / 10 ** currencyDecimals(currency);
+}
+
+function balanceRows(agencyId = null) {
+  const rows = agencyId
+    ? db.prepare(`SELECT b.agency_id AS agencyId,a.name AS agencyName,b.currency,
+        b.balance_minor AS balanceMinor,b.updated_at AS updatedAt
+        FROM agency_balances b JOIN agencies a ON a.id=b.agency_id
+        WHERE b.agency_id=? ORDER BY b.currency`).all(agencyId)
+    : db.prepare(`SELECT b.agency_id AS agencyId,a.name AS agencyName,b.currency,
+        b.balance_minor AS balanceMinor,b.updated_at AS updatedAt
+        FROM agency_balances b JOIN agencies a ON a.id=b.agency_id
+        ORDER BY a.name,b.currency`).all();
+  return rows.map((row) => ({
+    ...row,
+    balance: fromMinorUnits(row.balanceMinor, row.currency),
+  }));
+}
+
+function ensureBalanceRow(agencyId, currency) {
+  db.prepare(`INSERT OR IGNORE INTO agency_balances(agency_id,currency,balance_minor,updated_at)
+    VALUES(?,?,0,?)`).run(agencyId, currency, now());
 }
 
 function transferSelect(where = "", order = "") {
@@ -982,6 +1057,82 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, { transfers: rows });
   }
 
+  if (req.method === "GET" && pathname === "/api/liquidity") {
+    const viewer = requireRole(req, res, [
+      "owner", "agent", "deputy_agent", "assistant_deputy", "employee",
+    ]);
+    if (!viewer) return;
+    const requestedAgency = new URL(req.url, "http://localhost").searchParams.get("agencyId");
+    const agencyId = viewer.role === "owner" ? requestedAgency : viewer.agencyId;
+    const balances = balanceRows(agencyId || null);
+    const ledger = viewer.role === "owner"
+      ? db.prepare(`SELECT l.*,a.name AS agency_name,c.name AS counterparty_name
+          FROM liquidity_ledger l JOIN agencies a ON a.id=l.agency_id
+          LEFT JOIN agencies c ON c.id=l.counterparty_agency_id
+          ORDER BY l.created_at DESC LIMIT 200`).all()
+      : db.prepare(`SELECT l.*,a.name AS agency_name,c.name AS counterparty_name
+          FROM liquidity_ledger l JOIN agencies a ON a.id=l.agency_id
+          LEFT JOIN agencies c ON c.id=l.counterparty_agency_id
+          WHERE l.agency_id=? ORDER BY l.created_at DESC LIMIT 100`).all(viewer.agencyId);
+    return json(res, 200, {
+      balances,
+      ledger: ledger.map((row) => ({
+        ...row,
+        amount: fromMinorUnits(row.amount_minor, row.currency),
+        balanceBefore: fromMinorUnits(row.balance_before_minor, row.currency),
+        balanceAfter: fromMinorUnits(row.balance_after_minor, row.currency),
+      })),
+    });
+  }
+
+  if (req.method === "POST" && pathname === "/api/owner/liquidity/adjust") {
+    const owner = requireRole(req, res, ["owner"]);
+    if (!owner) return;
+    const body = await readJson(req);
+    const agencyId = String(body.agencyId || "").trim();
+    const currency = String(body.currency || "").trim();
+    const direction = body.direction === "subtract" ? -1 : 1;
+    const amountMinor = toMinorUnits(body.amount, currency);
+    const reason = String(body.reason || "").trim();
+    const idempotencyKey = String(body.idempotencyKey || "").trim();
+    if (!supportedCurrencies.has(currency) || !amountMinor || !reason || idempotencyKey.length < 12) {
+      return json(res, 400, { error: "أدخل الوكالة والعملة والمبلغ والسبب بصورة صحيحة." });
+    }
+    const agency = db.prepare("SELECT id,name FROM agencies WHERE id=? AND status='active'").get(agencyId);
+    if (!agency) return json(res, 404, { error: "الوكالة غير موجودة أو غير مفعّلة." });
+    const existing = db.prepare("SELECT id FROM liquidity_ledger WHERE idempotency_key=?").get(idempotencyKey);
+    if (existing) return json(res, 200, { message: "تم تسجيل هذه العملية مسبقاً.", duplicate: true });
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      ensureBalanceRow(agency.id, currency);
+      const before = Number(db.prepare("SELECT balance_minor FROM agency_balances WHERE agency_id=? AND currency=?").get(agency.id, currency).balance_minor);
+      const signedAmount = direction * amountMinor;
+      const after = before + signedAmount;
+      if (after < 0) throw Object.assign(new Error("رصيد الوكالة غير كافٍ لإجراء الخصم."), { statusCode: 409 });
+      db.prepare("UPDATE agency_balances SET balance_minor=?,updated_at=? WHERE agency_id=? AND currency=?")
+        .run(after, now(), agency.id, currency);
+      db.prepare(`INSERT INTO liquidity_ledger(id,agency_id,currency,amount_minor,balance_before_minor,
+        balance_after_minor,movement_type,idempotency_key,reason,created_by,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
+        uniqueId("liquidity_ledger", "LIQ"), agency.id, currency, signedAmount,
+        before, after, direction > 0 ? "owner_credit" : "owner_debit",
+        idempotencyKey, reason, owner.id, now(),
+      );
+      db.exec("COMMIT");
+      audit(owner.id, direction > 0 ? "إضافة سيولة" : "خصم سيولة", "agency", agency.id, {
+        currency, amount: fromMinorUnits(amountMinor, currency), reason,
+      });
+      return json(res, 200, { message: "تم تحديث سيولة الوكالة.", balance: fromMinorUnits(after, currency) });
+    } catch (error) {
+      db.exec("ROLLBACK");
+      if (error.statusCode) return json(res, error.statusCode, { error: error.message });
+      if (String(error.message).includes("UNIQUE constraint failed")) {
+        return json(res, 200, { message: "تم تسجيل هذه العملية مسبقاً.", duplicate: true });
+      }
+      throw error;
+    }
+  }
+
   if (req.method === "POST" && pathname === "/api/transfers") {
     const creator = requireRole(req, res, [
       "owner",
@@ -1010,11 +1161,14 @@ async function handleApi(req, res, pathname) {
         String(body.destination || "").trim(),
       );
     const amount = Number(body.amount || 0);
+    const settlementMethod = body.settlementMethod === "liquidity" ? "liquidity" : "manual";
+    const idempotencyKey = String(body.idempotencyKey || "").trim();
     if (
       !body.receiver ||
       !body.phone ||
       amount <= 0 ||
-      !["USD", "SYP", "TRY", "EUR"].includes(body.currency)
+      !supportedCurrencies.has(body.currency) ||
+      idempotencyKey.length < 12
     ) {
       return json(res, 400, { error: "بيانات الحوالة غير مكتملة." });
     }
@@ -1023,6 +1177,16 @@ async function handleApi(req, res, pathname) {
       .get();
     const rates = settingsRow ? JSON.parse(settingsRow.value) : {};
     const commission = (amount * Number(rates[body.currency] || 0)) / 100;
+    const existingTransfer = db.prepare("SELECT id,transfer_number FROM transfers WHERE idempotency_key=?").get(idempotencyKey);
+    if (existingTransfer) return json(res, 200, {
+      message: "تم إنشاء هذه الحوالة مسبقاً.", id: existingTransfer.id,
+      transferNumber: existingTransfer.transfer_number, duplicate: true,
+    });
+    if (settlementMethod === "liquidity" && (!destination || destination.id === sourceAgency.id)) {
+      return json(res, 400, { error: "الدفع من السيولة يتطلب وكالة استلام مسجّلة ومختلفة." });
+    }
+    const amountMinor = toMinorUnits(body.amount, body.currency);
+    if (!amountMinor) return json(res, 400, { error: "صيغة مبلغ الحوالة غير صحيحة." });
     const id = uniqueId("transfers", "TR");
     let transferNumber;
     do transferNumber = String(crypto.randomInt(100000, 1000000));
@@ -1031,10 +1195,12 @@ async function handleApi(req, res, pathname) {
         .prepare("SELECT 1 FROM transfers WHERE transfer_number=?")
         .get(transferNumber)
     );
-    db.prepare(
-      `INSERT INTO transfers(id,transfer_number,source_agency_id,destination_agency_id,destination_name,created_by,sender_name,receiver_name,receiver_phone,amount,currency,commission,total,status,created_at,delivery_address,notes)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'قيد الانتظار',?,?,?)`,
-    ).run(
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare(
+      `INSERT INTO transfers(id,transfer_number,source_agency_id,destination_agency_id,destination_name,created_by,sender_name,receiver_name,receiver_phone,amount,currency,commission,total,status,created_at,delivery_address,notes,settlement_method,idempotency_key)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'قيد الانتظار',?,?,?,?,?)`,
+      ).run(
       id,
       transferNumber,
       sourceAgency.id,
@@ -1051,7 +1217,44 @@ async function handleApi(req, res, pathname) {
       now(),
       String(body.deliveryAddress || "").trim(),
       String(body.notes || "").trim(),
-    );
+      settlementMethod,
+      idempotencyKey,
+      );
+      if (settlementMethod === "liquidity") {
+        ensureBalanceRow(sourceAgency.id, body.currency);
+        ensureBalanceRow(destination.id, body.currency);
+        const sourceBefore = Number(db.prepare("SELECT balance_minor FROM agency_balances WHERE agency_id=? AND currency=?").get(sourceAgency.id, body.currency).balance_minor);
+        const destinationBefore = Number(db.prepare("SELECT balance_minor FROM agency_balances WHERE agency_id=? AND currency=?").get(destination.id, body.currency).balance_minor);
+        if (sourceBefore < amountMinor) {
+          throw Object.assign(new Error("رصيد السيولة غير كافٍ لإرسال هذه الحوالة."), { statusCode: 409 });
+        }
+        const sourceAfter = sourceBefore - amountMinor;
+        const destinationAfter = destinationBefore + amountMinor;
+        if (!Number.isSafeInteger(destinationAfter)) throw new Error("تجاوز الرصيد الحد المسموح.");
+        db.prepare("UPDATE agency_balances SET balance_minor=?,updated_at=? WHERE agency_id=? AND currency=?")
+          .run(sourceAfter, now(), sourceAgency.id, body.currency);
+        db.prepare("UPDATE agency_balances SET balance_minor=?,updated_at=? WHERE agency_id=? AND currency=?")
+          .run(destinationAfter, now(), destination.id, body.currency);
+        const ledgerInsert = db.prepare(`INSERT INTO liquidity_ledger(id,agency_id,currency,amount_minor,
+          balance_before_minor,balance_after_minor,movement_type,transfer_id,counterparty_agency_id,
+          idempotency_key,reason,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+        ledgerInsert.run(uniqueId("liquidity_ledger", "LIQ"), sourceAgency.id, body.currency,
+          -amountMinor, sourceBefore, sourceAfter, "transfer_debit", id, destination.id,
+          idempotencyKey + ":debit", "دفع حوالة من رصيد السيولة", creator.id, now());
+        ledgerInsert.run(uniqueId("liquidity_ledger", "LIQ"), destination.id, body.currency,
+          amountMinor, destinationBefore, destinationAfter, "transfer_credit", id, sourceAgency.id,
+          idempotencyKey + ":credit", "استلام حوالة في رصيد السيولة", creator.id, now());
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      if (error.statusCode) return json(res, error.statusCode, { error: error.message });
+      if (String(error.message).includes("UNIQUE constraint failed")) {
+        const repeated = db.prepare("SELECT id,transfer_number FROM transfers WHERE idempotency_key=?").get(idempotencyKey);
+        if (repeated) return json(res, 200, { message: "تم إنشاء هذه الحوالة مسبقاً.", id: repeated.id, transferNumber: repeated.transfer_number, duplicate: true });
+      }
+      throw error;
+    }
     audit(creator.id, "إنشاء حوالة", "transfer", id, { transferNumber });
     return json(res, 201, {
       message: "تم إنشاء الحوالة.",
