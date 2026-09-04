@@ -479,6 +479,15 @@
             required
           />
 
+          <label for="settlementMethod">طريقة تسوية الحوالة</label>
+          <select id="settlementMethod" required>
+            <option value="manual">تسليم يدوي — دون تحريك رصيد الوكالات</option>
+            <option value="liquidity">دفع من رصيد السيولة — خصم وإضافة إلكترونياً</option>
+          </select>
+          <div class="commission-box">
+            عند الدفع من السيولة يُخصم المبلغ من الوكالة المرسلة ويُضاف فوراً إلى الوكالة المستلمة.
+          </div>
+
           <label for="deliveryAddress">
             عنوان التسليم
             <span class="optional">(اختياري)</span>
@@ -527,6 +536,7 @@
       const currencyInput = document.getElementById("currency");
       const agencyLogoInput = document.getElementById("agencyLogo");
       const commissionPreview = document.getElementById("commissionPreview");
+      const settlementInput = document.getElementById("settlementMethod");
 
       const defaultCommissionRates = { USD: 0, SYP: 0, TRY: 0, EUR: 0 };
       let platformSettings = {
@@ -536,6 +546,7 @@
       };
       let signedInUser = null;
       let marketData = null;
+      let pendingTransferKey = null;
       const marketRegion = document.getElementById("marketRegion");
 
       async function api(path, options = {}) {
@@ -802,6 +813,7 @@
           sourceAgencyId: row.source_agency_id,
           destination: row.destination_agency_name || row.destination_name,
           destinationAgencyId: row.destination_agency_id,
+          settlementMethod: row.settlement_method || "manual",
           deliveryAddress: row.delivery_address || "",
           notes: row.notes || "",
           status: row.status,
@@ -1040,6 +1052,9 @@
               "الوجهة: " +
               escapeHtml(transfer.destination || "غير محددة") +
               "<br>" +
+              "طريقة التسوية: " +
+              (transfer.settlementMethod === "liquidity" ? "رصيد السيولة" : "تسليم يدوي") +
+              "<br>" +
               "أنشأ الحوالة: " +
               escapeHtml(transfer.createdBy || "غير مسجل") +
               " — " +
@@ -1178,23 +1193,27 @@
 
         let created;
         try {
+          pendingTransferKey = pendingTransferKey || crypto.randomUUID();
           created = await api("/api/transfers", {
             method: "POST",
             body: JSON.stringify({
               sender,
               receiver,
               phone,
-              amount: Number(amount),
+              amount,
               currency,
               source,
               sourceAgencyId: signedInUser?.agencyId || sourceAgencyId,
               destination,
+              settlementMethod: settlementInput.value,
+              idempotencyKey: pendingTransferKey,
               deliveryAddress,
               notes,
             }),
           });
           const transferData = await api("/api/transfers");
           transfers = (transferData.transfers || []).map(mapServerTransfer);
+          pendingTransferKey = null;
         } catch (error) {
           notice.style.display = "block";
           notice.textContent = error.message;
