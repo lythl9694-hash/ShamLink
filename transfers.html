@@ -350,8 +350,41 @@
         background: #fff9e8;
       }
 
+      .exchange-calculator {
+        margin-top: 18px;
+        padding: 16px;
+        border: 1px solid #b9ddd4;
+        border-radius: 14px;
+        background: #f5fffb;
+      }
+
+      .exchange-calculator h3 { margin: 0 0 6px; color: #08765a; }
+
+      .calculator-controls {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 10px;
+        align-items: end;
+      }
+
+      .calculator-results {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .calculator-result {
+        padding: 14px;
+        border-radius: 11px;
+        background: #fff;
+        border: 1px solid #d6e9e3;
+      }
+
+      .calculator-result strong { display: block; margin-top: 7px; color: #056747; font-size: 20px; }
+
       @media (max-width: 640px) {
-        .market-controls, .gold-grid { grid-template-columns: 1fr; }
+        .market-controls, .gold-grid, .calculator-controls { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -390,6 +423,25 @@
           </table>
         </div>
         <div class="gold-grid" id="goldGrid"></div>
+        <section class="exchange-calculator" aria-labelledby="calculatorTitle">
+          <h3 id="calculatorTitle">🧮 حاسبة تحويل العملات</h3>
+          <p class="rates-note">اكتب المبلغ لتظهر قيمته تلقائياً بسعر السوق التقريبي.</p>
+          <div class="calculator-controls">
+            <div>
+              <label for="calculatorAmount">المبلغ</label>
+              <input id="calculatorAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="مثال: 100" />
+            </div>
+            <div>
+              <label for="calculatorFrom">من عملة</label>
+              <select id="calculatorFrom"><option value="USD">دولار USD</option><option value="EUR">يورو EUR</option><option value="TRY">ليرة تركية TRY</option><option value="SYP">ليرة سورية SYP</option></select>
+            </div>
+            <div>
+              <label for="calculatorTo">إلى عملة</label>
+              <select id="calculatorTo"><option value="ALL">جميع العملات</option><option value="USD">دولار USD</option><option value="EUR">يورو EUR</option><option value="TRY">ليرة تركية TRY</option><option value="SYP">ليرة سورية SYP</option></select>
+            </div>
+          </div>
+          <div class="calculator-results" id="calculatorResults"><p class="empty">أدخل مبلغاً لبدء الحساب.</p></div>
+        </section>
         <p class="rates-note">الأسعار آلية واستـرشادية من السوق العالمي، ويُحسب فرق الشراء والبيع حسب المنطقة المختارة. السعر المحلي الفعلي قد يختلف، خصوصاً لليرة السورية.</p>
       </div>
 
@@ -548,6 +600,10 @@
       let marketData = null;
       let pendingTransferKey = null;
       const marketRegion = document.getElementById("marketRegion");
+      const calculatorAmount = document.getElementById("calculatorAmount");
+      const calculatorFrom = document.getElementById("calculatorFrom");
+      const calculatorTo = document.getElementById("calculatorTo");
+      const calculatorResults = document.getElementById("calculatorResults");
 
       async function api(path, options = {}) {
         const response = await fetch(path, {
@@ -604,6 +660,36 @@
           return '<div class="gold-item"><strong>ذهب عيار ' + karat + '</strong><br>' + value.toLocaleString("ar", { maximumFractionDigits: 2 }) + ' ' + localCurrency + ' / غرام</div>';
         }).join("");
         document.getElementById("marketStatus").textContent = "المنطقة: " + marketRegion.options[marketRegion.selectedIndex].text + " — آخر تحديث: " + new Date(marketData.updatedAt).toLocaleString("ar");
+        calculateExchange();
+      }
+
+      function calculateExchange() {
+        const amount = Number(calculatorAmount.value || 0);
+        if (!marketData || !amount || amount < 0) {
+          calculatorResults.innerHTML = '<p class="empty">أدخل مبلغاً لبدء الحساب.</p>';
+          return;
+        }
+        const rates = marketData.rates || {};
+        const from = calculatorFrom.value;
+        const selectedTarget = calculatorTo.value;
+        const fromRate = Number(rates[from] || 0);
+        if (!fromRate) {
+          calculatorResults.innerHTML = '<p class="empty">سعر العملة غير متوفر حالياً.</p>';
+          return;
+        }
+        const targets = selectedTarget === "ALL"
+          ? ["USD", "EUR", "TRY", "SYP"].filter(function (code) { return code !== from; })
+          : [selectedTarget];
+        calculatorResults.innerHTML = targets.map(function (target) {
+          const targetRate = Number(rates[target] || 0);
+          const result = amount * targetRate / fromRate;
+          const maximumDigits = target === "SYP" ? 0 : 2;
+          return '<div class="calculator-result"><span>' + amount.toLocaleString("ar") + " " + from +
+            ' تساوي تقريباً</span><strong>' + result.toLocaleString("ar", {
+              minimumFractionDigits: target === "SYP" ? 0 : 2,
+              maximumFractionDigits: maximumDigits,
+            }) + " " + target + "</strong></div>";
+        }).join("");
       }
 
       async function loadMarketData(force) {
@@ -1733,6 +1819,9 @@
       });
       document.getElementById("detectRegion").addEventListener("click", detectRegionFromDevice);
       document.getElementById("refreshMarket").addEventListener("click", function () { loadMarketData(true); });
+      calculatorAmount.addEventListener("input", calculateExchange);
+      calculatorFrom.addEventListener("change", calculateExchange);
+      calculatorTo.addEventListener("change", calculateExchange);
 
       loadCentralData();
       loadMarketData(false);
