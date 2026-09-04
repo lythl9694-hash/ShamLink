@@ -21,7 +21,7 @@ db.exec(`
     phone TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     password_salt TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('owner','agent','deputy_agent','assistant_deputy','employee','client')),
+    role TEXT NOT NULL CHECK (role IN ('owner','super_admin','agent','deputy_agent','assistant_deputy','employee','client')),
     status TEXT NOT NULL CHECK (status IN ('pending_owner','pending_agent','pending_verification','active','rejected','suspended')),
     agency_id TEXT,
     created_at TEXT NOT NULL,
@@ -121,6 +121,38 @@ db.exec(`
     FOREIGN KEY (counterparty_agency_id) REFERENCES agencies(id),
     FOREIGN KEY (created_by) REFERENCES users(id)
   );
+  CREATE TABLE IF NOT EXISTS super_admin_permissions (
+    user_id TEXT PRIMARY KEY,
+    previous_role TEXT NOT NULL,
+    can_publish_announcements INTEGER NOT NULL DEFAULT 0,
+    appointed_by TEXT NOT NULL,
+    appointed_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (appointed_by) REFERENCES users(id)
+  );
+  CREATE TABLE IF NOT EXISTS announcements (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    audience TEXT NOT NULL CHECK (audience IN ('all','agents','employees','clients')),
+    priority TEXT NOT NULL CHECK (priority IN ('normal','important','urgent')),
+    starts_at TEXT NOT NULL,
+    ends_at TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  );
+  CREATE TABLE IF NOT EXISTS announcement_reads (
+    announcement_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    read_at TEXT NOT NULL,
+    PRIMARY KEY (announcement_id,user_id),
+    FOREIGN KEY (announcement_id) REFERENCES announcements(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
   CREATE INDEX IF NOT EXISTS idx_users_status_role ON users(status, role);
   CREATE INDEX IF NOT EXISTS idx_users_agency ON users(agency_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
@@ -131,6 +163,39 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_liquidity_ledger_agency ON liquidity_ledger(agency_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_liquidity_ledger_transfer ON liquidity_ledger(transfer_id);
 `);
+
+function migrateUsersForSuperAdmin() {
+  const schema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get()?.sql || "";
+  if (schema.includes("super_admin")) return;
+  db.exec("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;");
+  try {
+    db.exec(`CREATE TABLE users_new (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      password_salt TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('owner','super_admin','agent','deputy_agent','assistant_deputy','employee','client')),
+      status TEXT NOT NULL CHECK (status IN ('pending_owner','pending_agent','pending_verification','active','rejected','suspended')),
+      agency_id TEXT,
+      created_at TEXT NOT NULL,
+      approved_at TEXT,
+      approved_by TEXT
+    );
+    INSERT INTO users_new SELECT * FROM users;
+    DROP TABLE users;
+    ALTER TABLE users_new RENAME TO users;
+    COMMIT;`);
+  } catch (error) {
+    db.exec("ROLLBACK;");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys=ON;");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_users_status_role ON users(status, role); CREATE INDEX IF NOT EXISTS idx_users_agency ON users(agency_id);");
+}
+
+migrateUsersForSuperAdmin();
 
 // Keep existing development databases compatible as transfer verification evolves.
 function ensureColumn(table, column, definition) {
@@ -170,10 +235,11 @@ const publicFiles = new Set([
   "/register.html",
   "/account.js",
   "/dashboard.css",
+  "/announcements.js",
 ]);
 const rolePages = {
-  "/owner-dashboard.html": ["owner"],
-  "/settings.html": ["owner"],
+  "/owner-dashboard.html": ["owner", "super_admin"],
+  "/settings.html": ["owner", "super_admin"],
   "/agent-dashboard.html": [
     "owner",
     "agent",
@@ -372,6 +438,19 @@ function requireRole(req, res, roles) {
     return null;
   }
   return user;
+}
+
+function canPublishAnnouncements(user) {
+  if (user?.role === "owner") return true;
+  if (user?.role !== "super_admin") return false;
+  return Boolean(db.prepare("SELECT can_publish_announcements AS allowed FROM super_admin_permissions WHERE user_id=?").get(user.id)?.allowed);
+}
+
+function announcementAudienceForRole(role) {
+  if (["owner", "super_admin"].includes(role)) return ["all", "agents", "employees", "clients"];
+  if (["agent", "deputy_agent", "assistant_deputy"].includes(role)) return ["all", "agents"];
+  if (role === "employee") return ["all", "employees"];
+  return ["all", "clients"];
 }
 
 function rateLimited(req, key, limit = 10, windowMs = 15 * 60 * 1000) {
@@ -660,8 +739,139 @@ async function handleApi(req, res, pathname) {
     );
   }
 
-  if (req.method === "GET" && pathname === "/api/owner/agents") {
+  if (req.method === "GET" && pathname === "/api/owner/super-admins") {
     const owner = requireRole(req, res, ["owner"]);
+    if (!owner) return;
+    const admins = db.prepare(`SELECT u.id,u.name,u.phone,u.status,
+      p.can_publish_announcements AS canPublishAnnouncements,p.appointed_at AS appointedAt
+      FROM super_admin_permissions p JOIN users u ON u.id=p.user_id
+      WHERE u.role='super_admin' ORDER BY p.appointed_at DESC`).all();
+    return json(res, 200, { admins: admins.map((item) => ({ ...item, canPublishAnnouncements: Boolean(item.canPublishAnnouncements) })) });
+  }
+
+  if (req.method === "POST" && pathname === "/api/owner/super-admins") {
+    const owner = requireRole(req, res, ["owner"]);
+    if (!owner) return;
+    const body = await readJson(req);
+    const userId = String(body.userId || "").trim();
+    const candidate = db.prepare("SELECT id,name,role,status FROM users WHERE id=?").get(userId);
+    if (!candidate || candidate.role === "owner" || candidate.role === "super_admin") {
+      return json(res, 400, { error: "اختر حساباً مفعّلاً غير تابع لصاحب المنصة أو لسوبر أدمن حالي." });
+    }
+    if (candidate.status !== "active") return json(res, 409, { error: "يجب تفعيل الحساب قبل تعيينه سوبر أدمن." });
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare(`INSERT INTO super_admin_permissions(user_id,previous_role,can_publish_announcements,appointed_by,appointed_at,updated_at)
+        VALUES(?,?,0,?,?,?)`).run(candidate.id, candidate.role, owner.id, now(), now());
+      db.prepare("UPDATE users SET role='super_admin' WHERE id=?").run(candidate.id);
+      db.prepare("DELETE FROM sessions WHERE user_id=?").run(candidate.id);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    audit(owner.id, "تعيين مساعد صاحب المنصة", "user", candidate.id, { previousRole: candidate.role });
+    return json(res, 201, { message: "تم تعيين الحساب Super Admin، ويجب عليه تسجيل الدخول مجدداً." });
+  }
+
+  const superAdminPermission = pathname.match(/^\/api\/owner\/super-admins\/([^/]+)\/announcement-permission$/);
+  if (req.method === "POST" && superAdminPermission) {
+    const owner = requireRole(req, res, ["owner"]);
+    if (!owner) return;
+    const body = await readJson(req);
+    const allowed = body.allowed === true ? 1 : 0;
+    const result = db.prepare("UPDATE super_admin_permissions SET can_publish_announcements=?,updated_at=? WHERE user_id=?")
+      .run(allowed, now(), superAdminPermission[1]);
+    if (!result.changes) return json(res, 404, { error: "حساب Super Admin غير موجود." });
+    audit(owner.id, allowed ? "منح صلاحية نشر الإعلانات" : "سحب صلاحية نشر الإعلانات", "user", superAdminPermission[1]);
+    return json(res, 200, { message: allowed ? "تم تشغيل صلاحية نشر الإعلانات." : "تم إيقاف صلاحية نشر الإعلانات." });
+  }
+
+  const revokeSuperAdmin = pathname.match(/^\/api\/owner\/super-admins\/([^/]+)\/revoke$/);
+  if (req.method === "POST" && revokeSuperAdmin) {
+    const owner = requireRole(req, res, ["owner"]);
+    if (!owner) return;
+    const permission = db.prepare("SELECT previous_role FROM super_admin_permissions WHERE user_id=?").get(revokeSuperAdmin[1]);
+    if (!permission) return json(res, 404, { error: "حساب Super Admin غير موجود." });
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("UPDATE users SET role=? WHERE id=? AND role='super_admin'").run(permission.previous_role, revokeSuperAdmin[1]);
+      db.prepare("DELETE FROM sessions WHERE user_id=?").run(revokeSuperAdmin[1]);
+      db.prepare("DELETE FROM super_admin_permissions WHERE user_id=?").run(revokeSuperAdmin[1]);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    audit(owner.id, "سحب صلاحية مساعد صاحب المنصة", "user", revokeSuperAdmin[1], { restoredRole: permission.previous_role });
+    return json(res, 200, { message: "تم سحب صلاحية Super Admin وإعادة دوره السابق." });
+  }
+
+  if (req.method === "GET" && pathname === "/api/announcements") {
+    const viewer = requireRole(req, res, ["owner", "super_admin", "agent", "deputy_agent", "assistant_deputy", "employee", "client"]);
+    if (!viewer) return;
+    const audiences = announcementAudienceForRole(viewer.role);
+    const placeholders = audiences.map(() => "?").join(",");
+    const announcements = db.prepare(`SELECT a.*,u.name AS author_name,
+      CASE WHEN r.user_id IS NULL THEN 0 ELSE 1 END AS is_read
+      FROM announcements a JOIN users u ON u.id=a.created_by
+      LEFT JOIN announcement_reads r ON r.announcement_id=a.id AND r.user_id=?
+      WHERE a.is_active=1 AND a.starts_at<=? AND (a.ends_at IS NULL OR a.ends_at>?)
+      AND a.audience IN (${placeholders})
+      ORDER BY CASE a.priority WHEN 'urgent' THEN 1 WHEN 'important' THEN 2 ELSE 3 END,a.created_at DESC`).all(viewer.id, now(), now(), ...audiences);
+    return json(res, 200, { announcements: announcements.map((item) => ({ ...item, is_read: Boolean(item.is_read) })), canPublish: canPublishAnnouncements(viewer) });
+  }
+
+  if (req.method === "GET" && pathname === "/api/announcements/manage") {
+    const viewer = requireRole(req, res, ["owner", "super_admin"]);
+    if (!viewer) return;
+    if (!canPublishAnnouncements(viewer)) return json(res, 403, { error: "صلاحية إدارة الإعلانات غير مفعّلة." });
+    const announcements = db.prepare(`SELECT a.*,u.name AS author_name FROM announcements a
+      JOIN users u ON u.id=a.created_by ORDER BY a.created_at DESC LIMIT 100`).all();
+    return json(res, 200, { announcements });
+  }
+
+  if (req.method === "POST" && pathname === "/api/announcements") {
+    const publisher = requireRole(req, res, ["owner", "super_admin"]);
+    if (!publisher) return;
+    if (!canPublishAnnouncements(publisher)) return json(res, 403, { error: "صاحب المنصة لم يمنحك صلاحية نشر الإعلانات." });
+    const body = await readJson(req);
+    const title = String(body.title || "").trim();
+    const message = String(body.body || "").trim();
+    const audience = ["all", "agents", "employees", "clients"].includes(body.audience) ? body.audience : "all";
+    const priority = ["normal", "important", "urgent"].includes(body.priority) ? body.priority : "normal";
+    const endsAt = body.endsAt ? new Date(body.endsAt).toISOString() : null;
+    if (!title || !message || title.length > 120 || message.length > 2000) return json(res, 400, { error: "أدخل عنوان الإعلان ونصه بصورة صحيحة." });
+    if (endsAt && endsAt <= now()) return json(res, 400, { error: "تاريخ انتهاء الإعلان يجب أن يكون في المستقبل." });
+    const id = uniqueId("announcements", "ANN");
+    db.prepare(`INSERT INTO announcements(id,title,body,audience,priority,starts_at,ends_at,created_by,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?)`).run(id, title, message, audience, priority, now(), endsAt, publisher.id, now(), now());
+    audit(publisher.id, "نشر إعلان", "announcement", id, { audience, priority });
+    return json(res, 201, { message: "تم نشر الإعلان.", id });
+  }
+
+  const readAnnouncement = pathname.match(/^\/api\/announcements\/([^/]+)\/read$/);
+  if (req.method === "POST" && readAnnouncement) {
+    const viewer = requireRole(req, res, ["owner", "super_admin", "agent", "deputy_agent", "assistant_deputy", "employee", "client"]);
+    if (!viewer) return;
+    if (!db.prepare("SELECT 1 FROM announcements WHERE id=? AND is_active=1").get(readAnnouncement[1])) return json(res, 404, { error: "الإعلان غير موجود." });
+    db.prepare("INSERT OR REPLACE INTO announcement_reads(announcement_id,user_id,read_at) VALUES(?,?,?)").run(readAnnouncement[1], viewer.id, now());
+    return json(res, 200, { message: "تم تسجيل قراءة الإعلان." });
+  }
+
+  const closeAnnouncement = pathname.match(/^\/api\/announcements\/([^/]+)\/close$/);
+  if (req.method === "POST" && closeAnnouncement) {
+    const publisher = requireRole(req, res, ["owner", "super_admin"]);
+    if (!publisher) return;
+    if (!canPublishAnnouncements(publisher)) return json(res, 403, { error: "صلاحية إدارة الإعلانات غير مفعّلة." });
+    const result = db.prepare("UPDATE announcements SET is_active=0,updated_at=? WHERE id=?").run(now(), closeAnnouncement[1]);
+    if (!result.changes) return json(res, 404, { error: "الإعلان غير موجود." });
+    audit(publisher.id, "إيقاف إعلان", "announcement", closeAnnouncement[1]);
+    return json(res, 200, { message: "تم إيقاف الإعلان." });
+  }
+
+  if (req.method === "GET" && pathname === "/api/owner/agents") {
+    const owner = requireRole(req, res, ["owner", "super_admin"]);
     if (!owner) return;
     const agents = db
       .prepare(
@@ -675,7 +885,7 @@ async function handleApi(req, res, pathname) {
     /^\/api\/owner\/agents\/([^/]+)\/approve$/,
   );
   if (req.method === "POST" && approveAgent) {
-    const owner = requireRole(req, res, ["owner"]);
+    const owner = requireRole(req, res, ["owner", "super_admin"]);
     if (!owner) return;
     const body = await readJson(req);
     const agent = db
@@ -706,7 +916,7 @@ async function handleApi(req, res, pathname) {
 
   const rejectAgent = pathname.match(/^\/api\/owner\/agents\/([^/]+)\/reject$/);
   if (req.method === "POST" && rejectAgent) {
-    const owner = requireRole(req, res, ["owner"]);
+    const owner = requireRole(req, res, ["owner", "super_admin"]);
     if (!owner) return;
     db.prepare(
       "UPDATE users SET status='rejected',approved_by=?,approved_at=? WHERE id=? AND role='agent'",
@@ -843,7 +1053,7 @@ async function handleApi(req, res, pathname) {
       "assistant_deputy",
     ]);
     if (!user) return;
-    if (user.role === "owner") {
+    if (["owner", "super_admin"].includes(user.role)) {
       const agencies = db
         .prepare(
           "SELECT * FROM agencies WHERE status='active' ORDER BY created_at DESC",
@@ -985,7 +1195,7 @@ async function handleApi(req, res, pathname) {
   }
 
   if (req.method === "POST" && pathname === "/api/owner/settings") {
-    const owner = requireRole(req, res, ["owner"]);
+    const owner = requireRole(req, res, ["owner", "super_admin"]);
     if (!owner) return;
     const body = await readJson(req);
     const commissionRates = body.commissionRates || {};
