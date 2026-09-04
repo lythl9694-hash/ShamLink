@@ -227,6 +227,73 @@ button {
   border-radius: 10px;
 }
 
+.agency-identity {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.agency-identity h2 {
+  margin-bottom: 8px;
+}
+.agent-mark {
+  display: grid;
+  place-items: center;
+  width: 82px;
+  height: 82px;
+  flex: 0 0 82px;
+  border-radius: 50%;
+  background: #07875f;
+  color: white;
+  font-size: 20px;
+  font-weight: bold;
+  box-shadow: 0 0 0 7px #dff5ed;
+}
+.agent-mark.small {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  box-shadow: 0 0 0 4px #dff5ed;
+}
+.level-card {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 12px;
+  background: #f0fdf8;
+}
+.level-number {
+  color: #056747;
+  font-size: 24px;
+  font-weight: bold;
+}
+.progress-track {
+  height: 12px;
+  margin: 12px 0 8px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #d1fae5;
+}
+.progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #07875f, #22c55e);
+}
+.level-private {
+  color: #475569;
+  line-height: 1.7;
+}
+.open-agency {
+  display: block;
+  margin-top: 12px;
+  padding: 11px;
+  border-radius: 9px;
+  background: #07875f;
+  color: white;
+  text-align: center;
+  text-decoration: none;
+}
+
 @media (max-width: 760px) {
   .stats {
     grid-template-columns: 1fr 1fr;
