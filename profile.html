@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>الملف الشخصي | شام لينك</title>
+    <link rel="stylesheet" href="dashboard.css" />
+    <style>
+      .profile-card{max-width:620px;margin:auto;text-align:center}.profile-photo{width:150px;height:150px;border-radius:50%;object-fit:cover;border:5px solid #dff5ed;background:#edf5f2;margin:5px auto 16px;display:grid;place-items:center;font-size:54px}.profile-photo img{width:100%;height:100%;border-radius:50%;object-fit:cover}.profile-data{display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:right;margin:18px 0}.profile-field{padding:12px;border-radius:10px;background:#f8fafc}.profile-field span{display:block;color:#64748b;font-size:13px;margin-bottom:5px}.profile-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}.danger{background:#b91c1c}@media(max-width:520px){.profile-data,.profile-actions{grid-template-columns:1fr}}
+    </style>
+  </head>
+  <body>
+    <header><div class="header-inner"><div><h1>الملف الشخصي</h1><p>حسابك في شام لينك</p></div><a class="home-link" href="index.html">الرئيسية</a></div></header>
+    <main class="container">
+      <section class="panel profile-card">
+        <div class="profile-photo" id="profilePhoto">👤</div>
+        <h2 id="profileName">جاري التحميل…</h2>
+        <div class="profile-data" id="profileData"></div>
+        <form id="profileForm">
+          <label for="photoInput">الصورة الشخصية</label>
+          <input id="photoInput" type="file" accept="image/jpeg,image/png,image/webp" />
+          <label for="profileBio">نبذة قصيرة (اختياري)</label>
+          <textarea id="profileBio" maxlength="300" placeholder="اكتب نبذة قصيرة عنك"></textarea>
+          <div class="profile-actions"><button type="submit">حفظ الملف الشخصي</button><button class="danger" id="removePhoto" type="button">حذف الصورة</button></div>
+        </form>
+        <div class="notice" id="profileNotice" hidden></div>
+      </section>
+    </main>
+    <script src="profile.js?v=20260904-1"></script>
+    <script src="announcements.js?v=20260904-1"></script>
+    <script src="support.js?v=20260904-1"></script>
+  </body>
+</html>
