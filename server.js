@@ -153,6 +153,28 @@ db.exec(`
     FOREIGN KEY (announcement_id) REFERENCES announcements(id),
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
+  CREATE TABLE IF NOT EXISTS agency_contracts (
+    id TEXT PRIMARY KEY,
+    contract_number TEXT NOT NULL UNIQUE,
+    reference_number TEXT NOT NULL UNIQUE,
+    source_agency_id TEXT NOT NULL,
+    destination_agency_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    terms TEXT NOT NULL,
+    source_identity_document TEXT NOT NULL,
+    destination_identity_document TEXT,
+    status TEXT NOT NULL CHECK (status IN ('pending_destination','active','rejected','cancelled')),
+    created_by TEXT NOT NULL,
+    accepted_by TEXT,
+    rejected_reason TEXT,
+    created_at TEXT NOT NULL,
+    accepted_at TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (source_agency_id) REFERENCES agencies(id),
+    FOREIGN KEY (destination_agency_id) REFERENCES agencies(id),
+    FOREIGN KEY (created_by) REFERENCES users(id),
+    FOREIGN KEY (accepted_by) REFERENCES users(id)
+  );
   CREATE INDEX IF NOT EXISTS idx_users_status_role ON users(status, role);
   CREATE INDEX IF NOT EXISTS idx_users_agency ON users(agency_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
@@ -162,6 +184,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_transfers_delivered_by ON transfers(delivered_by, delivered_at);
   CREATE INDEX IF NOT EXISTS idx_liquidity_ledger_agency ON liquidity_ledger(agency_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_liquidity_ledger_transfer ON liquidity_ledger(transfer_id);
+  CREATE INDEX IF NOT EXISTS idx_contracts_agencies ON agency_contracts(source_agency_id,destination_agency_id,status);
 `);
 
 function migrateUsersForSuperAdmin() {
@@ -254,6 +277,8 @@ const rolePages = {
   ],
   "/profile.html": ["owner", "super_admin", "agent", "deputy_agent", "assistant_deputy", "employee", "client"],
   "/profile.js": ["owner", "super_admin", "agent", "deputy_agent", "assistant_deputy", "employee", "client"],
+  "/contracts.html": ["owner", "agent", "deputy_agent", "assistant_deputy"],
+  "/contracts.js": ["owner", "agent", "deputy_agent", "assistant_deputy"],
   "/transfers.html": [
     "owner",
     "agent",
@@ -304,6 +329,25 @@ function toMinorUnits(value, currency) {
 
 function fromMinorUnits(value, currency) {
   return Number(value || 0) / 10 ** currencyDecimals(currency);
+}
+
+function validateIdentityDocument(value) {
+  const document = String(value || "");
+  const match = document.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) return null;
+  const bytes = Buffer.from(match[2], "base64");
+  return bytes.length > 0 && bytes.length <= 700000 ? document : null;
+}
+
+function contractNumbers() {
+  const year = new Date().getUTCFullYear();
+  let contractNumber;
+  let referenceNumber;
+  do contractNumber = `CON-${year}-${crypto.randomInt(100000, 1000000)}`;
+  while (db.prepare("SELECT 1 FROM agency_contracts WHERE contract_number=?").get(contractNumber));
+  do referenceNumber = `REF-${year}-${crypto.randomInt(100000, 1000000)}`;
+  while (db.prepare("SELECT 1 FROM agency_contracts WHERE reference_number=?").get(referenceNumber));
+  return { contractNumber, referenceNumber };
 }
 
 function balanceRows(agencyId = null) {
@@ -786,6 +830,73 @@ async function handleApi(req, res, pathname) {
     db.prepare("UPDATE users SET profile_photo=NULL WHERE id=?").run(viewer.id);
     audit(viewer.id, "حذف الصورة الشخصية", "user", viewer.id);
     return json(res, 200, { message: "تم حذف الصورة الشخصية." });
+  }
+
+  if (req.method === "GET" && pathname === "/api/contracts") {
+    const viewer = requireRole(req, res, ["owner", "agent", "deputy_agent", "assistant_deputy"]);
+    if (!viewer) return;
+    const query = String(new URL(req.url, "http://localhost").searchParams.get("q") || "").trim();
+    const scope = viewer.role === "owner" ? "1=1" : "(c.source_agency_id=? OR c.destination_agency_id=?)";
+    const search = query ? " AND (c.contract_number LIKE ? OR c.reference_number LIKE ?)" : "";
+    const params = viewer.role === "owner" ? [] : [viewer.agencyId, viewer.agencyId];
+    if (query) params.push(`%${query}%`, `%${query}%`);
+    const contracts = db.prepare(`SELECT c.*,s.name AS source_agency_name,d.name AS destination_agency_name,
+      creator.name AS creator_name,acceptor.name AS acceptor_name
+      FROM agency_contracts c JOIN agencies s ON s.id=c.source_agency_id
+      JOIN agencies d ON d.id=c.destination_agency_id JOIN users creator ON creator.id=c.created_by
+      LEFT JOIN users acceptor ON acceptor.id=c.accepted_by
+      WHERE ${scope}${search} ORDER BY c.created_at DESC LIMIT 200`).all(...params);
+    return json(res, 200, { contracts });
+  }
+
+  if (req.method === "POST" && pathname === "/api/contracts") {
+    const creator = requireRole(req, res, ["agent"]);
+    if (!creator) return;
+    const body = await readJson(req, 1000000);
+    const destinationAgencyId = String(body.destinationAgencyId || "").trim();
+    const title = String(body.title || "").trim();
+    const terms = String(body.terms || "").trim();
+    const identityDocument = validateIdentityDocument(body.identityDocument);
+    if (!creator.agencyId || !destinationAgencyId || destinationAgencyId === creator.agencyId || title.length < 3 || title.length > 150 || terms.length < 10 || terms.length > 10000 || !identityDocument) {
+      return json(res, 400, { error: "أدخل وكالة أخرى وعنواناً وبنوداً صحيحة، وأرفق صورة إثبات مدني واضحة." });
+    }
+    const destination = db.prepare("SELECT id FROM agencies WHERE id=? AND status='active'").get(destinationAgencyId);
+    if (!destination) return json(res, 404, { error: "الوكالة المقابلة غير موجودة أو غير مفعّلة." });
+    const id = uniqueId("agency_contracts", "CTR");
+    const numbers = contractNumbers();
+    db.prepare(`INSERT INTO agency_contracts(id,contract_number,reference_number,source_agency_id,destination_agency_id,
+      title,terms,source_identity_document,status,created_by,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,'pending_destination',?,?,?)`).run(
+      id, numbers.contractNumber, numbers.referenceNumber, creator.agencyId, destination.id,
+      title, terms, identityDocument, creator.id, now(), now(),
+    );
+    audit(creator.id, "إنشاء عقد وكالة", "contract", id, numbers);
+    return json(res, 201, { message: "تم إنشاء العقد وإرساله للوكالة المقابلة.", id, ...numbers });
+  }
+
+  const contractResponse = pathname.match(/^\/api\/contracts\/([^/]+)\/respond$/);
+  if (req.method === "POST" && contractResponse) {
+    const responder = requireRole(req, res, ["agent"]);
+    if (!responder) return;
+    const contract = db.prepare("SELECT * FROM agency_contracts WHERE id=?").get(contractResponse[1]);
+    if (!contract) return json(res, 404, { error: "العقد غير موجود." });
+    if (contract.destination_agency_id !== responder.agencyId) return json(res, 403, { error: "هذا العقد ليس موجهاً إلى وكالتك." });
+    if (contract.status !== "pending_destination") return json(res, 409, { error: "تم اتخاذ قرار بشأن هذا العقد مسبقاً." });
+    const body = await readJson(req, 1000000);
+    if (body.decision === "reject") {
+      const reason = String(body.reason || "").trim();
+      if (reason.length < 3) return json(res, 400, { error: "أدخل سبب الرفض." });
+      db.prepare("UPDATE agency_contracts SET status='rejected',rejected_reason=?,updated_at=? WHERE id=?")
+        .run(reason, now(), contract.id);
+      audit(responder.id, "رفض عقد وكالة", "contract", contract.id, { reason });
+      return json(res, 200, { message: "تم رفض العقد." });
+    }
+    const identityDocument = validateIdentityDocument(body.identityDocument);
+    if (!identityDocument) return json(res, 400, { error: "يلزم إرفاق صورة هوية أو جواز أو إثبات مدني واضح قبل قبول العقد." });
+    db.prepare(`UPDATE agency_contracts SET destination_identity_document=?,status='active',accepted_by=?,accepted_at=?,updated_at=? WHERE id=?`)
+      .run(identityDocument, responder.id, now(), now(), contract.id);
+    audit(responder.id, "قبول وتفعيل عقد وكالة", "contract", contract.id);
+    return json(res, 200, { message: "تم قبول العقد وتفعيله." });
   }
 
   if (req.method === "GET" && pathname === "/api/owner/super-admins") {
