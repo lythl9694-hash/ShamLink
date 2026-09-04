@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>العقود الإلكترونية | شام لينك</title>
+  <link rel="stylesheet" href="dashboard.css" />
+  <style>
+    textarea{width:100%;min-height:150px;padding:12px;border:1px solid #cbd5e1;border-radius:9px;font:inherit;resize:vertical}
+    .contract-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.contract-card{border:1px solid #dce8e3;border-radius:12px;padding:16px;background:#fff}.contract-card h3{margin:0 0 8px}.contract-meta{display:grid;gap:5px;color:#52636e;line-height:1.6}.status{display:inline-block;padding:5px 10px;border-radius:999px;background:#eef6f3;color:#056747;font-weight:bold}.status.active{background:#dcfce7}.status.rejected{background:#fee2e2;color:#991b1b}.document-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}.document-grid img{width:100%;max-height:230px;object-fit:contain;border:1px solid #ddd;border-radius:10px;background:#f8fafc}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.danger{background:#b91c1c}.search-row{display:grid;grid-template-columns:1fr auto;gap:10px}.print-sheet{display:none}
+    @media(max-width:650px){.contract-grid,.document-grid{grid-template-columns:1fr}}
+    @media print{body>*{display:none!important}.print-sheet{display:block!important;padding:25px;direction:rtl}.print-sheet img{max-width:45%;max-height:300px;object-fit:contain}.print-sheet .documents{display:flex;gap:15px}.print-sheet h1{text-align:center;color:#056747}}
+  </style>
+</head>
+<body>
+  <header><div class="header-inner"><div><h1>العقود الإلكترونية</h1><p>عقود الوكالات الموثقة بإثباتات الهوية</p></div><a class="home-link" href="index.html">الرئيسية</a></div></header>
+  <main class="container">
+    <section class="panel" id="createSection" hidden>
+      <h2>إنشاء عقد بين وكالتين</h2>
+      <p class="meta">لن يُفعّل العقد حتى تقبله الوكالة المقابلة وترفق إثباتها المدني.</p>
+      <form id="contractForm">
+        <label for="destinationAgencyId">معرّف الوكالة المقابلة</label><input id="destinationAgencyId" placeholder="AG-000000" required />
+        <label for="contractTitle">عنوان العقد</label><input id="contractTitle" maxlength="150" required />
+        <label for="contractTerms">بنود العقد</label><textarea id="contractTerms" maxlength="10000" required></textarea>
+        <label for="sourceIdentity">صورة هوية أو جواز أو إثبات مدني لصاحب الوكالة</label><input id="sourceIdentity" type="file" accept="image/jpeg,image/png,image/webp" required />
+        <button type="submit">إنشاء العقد وإرساله للموافقة</button>
+      </form>
+      <div class="notice" id="createNotice" hidden></div>
+    </section>
+    <section class="panel">
+      <h2>سجل العقود</h2>
+      <form class="search-row" id="searchForm"><input id="contractSearch" type="search" placeholder="رقم العقد أو الرقم المرجعي" /><button>بحث</button></form>
+      <div id="contractList" class="contract-grid" style="margin-top:16px"></div>
+    </section>
+  </main>
+  <div id="printSheet" class="print-sheet"></div>
+  <script src="contracts.js?v=20260904-1"></script>
+  <script src="announcements.js?v=20260904-1"></script>
+  <script src="support.js?v=20260904-1"></script>
+</body>
+</html>
