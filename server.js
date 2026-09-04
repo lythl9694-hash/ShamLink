@@ -447,7 +447,7 @@ function createDebtLimitNotification(creditor, debtor, currency, outstandingMino
   const outstanding = fromMinorUnits(outstandingMinor, currency);
   const limit = fromMinorUnits(limitMinor, currency);
   const title = "تنبيه ببلوغ سقف الديون";
-  const body = `لقد وصلت وكالتكم إلى سقف الديون المحدد بينها وبين وكالة ${creditor.name}، والبالغ ${limit} ${currency}. المبلغ المستحق حالياً ${outstanding} ${currency}. يرجى تسديد المبالغ المستحقة في أقرب وقت ممكن لاستئناف المعاملات بين الوكالتين. وفي حال تقديم صاحب المستحقات بلاغاً رسمياً، تحتفظ المنصة بسجلات المعاملات والمستندات وإثباتات التسليم المرفقة، ويمكن تقديمها للجهات المختصة وفق الإجراءات القانونية المعمول بها. شاكرين تعاونكم — إدارة شام لينك`;
+  const body = `لقد وصلت وكالتكم إلى سقف الديون المحدد بينها وبين وكالة ${creditor.name}، والبالغ ${limit} ${currency}. المبلغ المستحق حالياً ${outstanding} ${currency}. يرجى تسديد المبالغ المستحقة في أقرب وقت ممكن لاستئناف المعاملات بين الوكالتين. وفي حال تقديم صاحب المستحقات بلاغاً رسمياً، تحتفظ المنصة بسجلات المعاملات والمستندات وإثباتات التسليم المرفقة، ويمكن تقديمها للجهات المختصة وفق الإجراءات القانونية المعمول بها. شاكرين تعاونكم — إدارة سند المالية`;
   db.prepare(`INSERT INTO debt_notifications(id,debtor_agency_id,creditor_agency_id,currency,
     outstanding_minor,limit_minor,title,body,created_at) VALUES(?,?,?,?,?,?,?,?,?)`)
     .run(id, debtor.id, creditor.id, currency, outstandingMinor, limitMinor, title, body, now());
@@ -1097,7 +1097,7 @@ async function handleApi(req, res, pathname) {
       const condition = viewer.role === "owner" ? "1=1" : "n.debtor_agency_id=?";
       const parameters = viewer.role === "owner" ? [viewer.id] : [viewer.id, viewer.agencyId];
       debtNotices = db.prepare(`SELECT n.id,n.title,n.body,'urgent' AS priority,n.created_at,
-        'نظام شام لينك' AS author_name,CASE WHEN r.user_id IS NULL THEN 0 ELSE 1 END AS is_read
+        'نظام سند المالية' AS author_name,CASE WHEN r.user_id IS NULL THEN 0 ELSE 1 END AS is_read
         FROM debt_notifications n LEFT JOIN debt_notification_reads r
         ON r.notification_id=n.id AND r.user_id=? WHERE n.is_active=1 AND ${condition}
         ORDER BY n.created_at DESC`).all(...parameters);

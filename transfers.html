@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>الحوالات | شام لينك</title>
+    <title>الحوالات | سند المالية</title>
 
     <style>
       * {
@@ -392,7 +392,7 @@
   <body>
     <header>
       <h1>الحوالات</h1>
-      <p>شام لينك</p>
+      <p>سند المالية</p>
     </header>
 
     <div class="container">
@@ -1320,7 +1320,7 @@
               agencyLogo +
               '" alt="شعار الوكالة">'
             : "") +
-          "<h3>إشعار حوالة | شام لينك</h3>" +
+          "<h3>إشعار حوالة | سند المالية</h3>" +
           "تم إنشاء الحوالة بنجاح ✅<br>" +
           "رقم الحوالة: <strong>" +
           transferCode +
@@ -1478,7 +1478,7 @@
         transfer.smsLocked = false;
 
         const message =
-          "شام لينك: كود استلام الحوالة رقم " +
+          "سند المالية: كود استلام الحوالة رقم " +
           transfer.code +
           " هو " +
           transfer.smsCode +
@@ -1566,7 +1566,7 @@
         context.fillStyle = "#07875f";
         context.font = "bold 42px Arial";
         context.fillText(
-          transfer.agencyLogo ? transfer.source : "شام لينك",
+          transfer.agencyLogo ? transfer.source : "سند المالية",
           1365,
           95,
         );
@@ -1574,7 +1574,7 @@
         context.font = "23px Arial";
         context.fillText(
           transfer.agencyLogo
-            ? "إشعار حوالة مالية • شام لينك"
+            ? "إشعار حوالة مالية • سند المالية"
             : "إشعار حوالة مالية",
           1365,
           138,
@@ -1776,7 +1776,7 @@
         const canvas = await createReceiptCanvas(transferCode);
         if (!canvas) return;
         const blob = await canvasBlob(canvas, "image/png");
-        downloadBlob(blob, "ShamLink-" + transferCode + ".png");
+        downloadBlob(blob, "SanadFinance-" + transferCode + ".png");
       }
 
       async function shareReceipt(transferCode, format) {
@@ -1791,17 +1791,17 @@
             canvas.width,
             canvas.height,
           );
-          filename = "ShamLink-" + transferCode + ".pdf";
+          filename = "SanadFinance-" + transferCode + ".pdf";
         } else {
           blob = await canvasBlob(canvas, "image/png");
-          filename = "ShamLink-" + transferCode + ".png";
+          filename = "SanadFinance-" + transferCode + ".png";
         }
         const file = new File([blob], filename, { type: blob.type });
         if (navigator.share && navigator.canShare?.({ files: [file] })) {
           try {
             await navigator.share({
               files: [file],
-              title: "إشعار حوالة شام لينك",
+              title: "إشعار حوالة سند المالية",
             });
             return;
           } catch (error) {
