@@ -44,6 +44,7 @@
         border-radius: 14px;
         box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
       }
+      .card + .card { margin-top: 18px; }
       h2 {
         margin-top: 0;
         color: #07865f;
@@ -70,6 +71,8 @@
         border-radius: 8px;
         font-size: 16px;
       }
+      .channel-toggle { display: flex; align-items: center; gap: 9px; }
+      .channel-toggle input { width: 20px; height: 20px; }
       button {
         width: 100%;
         margin-top: 22px;
@@ -169,12 +172,31 @@
         </form>
         <div class="notice" id="notice">تم حفظ الإعدادات بنجاح ✅</div>
       </section>
+      <section class="card" id="supportSettings" hidden>
+        <h2>الدعم الفني</h2>
+        <p class="hint">فعّل القنوات التي تريد إظهارها للمستخدمين، ويمكنك تغييرها أو إيقافها في أي وقت.</p>
+        <form id="supportForm">
+          <div class="row">
+            <label class="channel-toggle" for="whatsappEnabled"><input id="whatsappEnabled" type="checkbox" /> تفعيل واتساب</label>
+            <input id="whatsappValue" type="text" dir="ltr" placeholder="+905xxxxxxxxx" />
+          </div>
+          <div class="row">
+            <label class="channel-toggle" for="telegramEnabled"><input id="telegramEnabled" type="checkbox" /> تفعيل تلغرام</label>
+            <input id="telegramValue" type="text" dir="ltr" placeholder="@username" />
+          </div>
+          <button type="submit">حفظ إعدادات الدعم</button>
+        </form>
+        <div class="notice" id="supportNotice">تم حفظ إعدادات الدعم الفني ✅</div>
+      </section>
     </main>
     <script>
       const currencies = ["USD", "SYP", "TRY", "EUR"];
       const form = document.getElementById("commissionForm");
       const notice = document.getElementById("notice");
       const smsValidityInput = document.getElementById("smsValidityHours");
+      const supportSettings = document.getElementById("supportSettings");
+      const supportForm = document.getElementById("supportForm");
+      const supportNotice = document.getElementById("supportNotice");
       async function loadSettings() {
         const response = await fetch("/api/settings");
         const data = await response.json();
@@ -209,7 +231,35 @@
         notice.style.display = "block";
       });
       loadSettings().catch((error) => alert(error.message));
+      async function loadSupport() {
+        const authResponse = await fetch("/api/auth/status");
+        const auth = await authResponse.json();
+        if (auth.user?.role !== "owner") return;
+        supportSettings.hidden = false;
+        const response = await fetch("/api/support");
+        const data = await response.json();
+        document.getElementById("whatsappEnabled").checked = data.contacts?.whatsapp?.enabled === true;
+        document.getElementById("whatsappValue").value = data.contacts?.whatsapp?.value || "";
+        document.getElementById("telegramEnabled").checked = data.contacts?.telegram?.enabled === true;
+        document.getElementById("telegramValue").value = data.contacts?.telegram?.value || "";
+      }
+      supportForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await fetch("/api/owner/support", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            whatsapp: { enabled: document.getElementById("whatsappEnabled").checked, value: document.getElementById("whatsappValue").value.trim() },
+            telegram: { enabled: document.getElementById("telegramEnabled").checked, value: document.getElementById("telegramValue").value.trim() },
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) return alert(data.error || "تعذر حفظ إعدادات الدعم.");
+        supportNotice.style.display = "block";
+      });
+      loadSupport().catch((error) => alert(error.message));
     </script>
     <script src="announcements.js?v=20260904-1"></script>
+    <script src="support.js?v=20260904-1"></script>
   </body>
 </html>
