@@ -658,7 +658,17 @@ async function handleApi(req, res, pathname) {
       now(),
     );
     audit(agent.id, "إنشاء دعوة موظف", "invitation", inviteId);
-    const origin = `${req.headers["x-forwarded-proto"] || "http"}://${req.headers.host}`;
+    const forwardedProto = String(
+      req.headers["x-forwarded-proto"] || "http",
+    )
+      .split(",")[0]
+      .trim();
+    const forwardedHost = String(
+      req.headers["x-forwarded-host"] || req.headers.host,
+    )
+      .split(",")[0]
+      .trim();
+    const origin = `${forwardedProto}://${forwardedHost}`;
     return json(res, 201, {
       code,
       expiresAt,
@@ -1211,9 +1221,7 @@ function serveFile(req, res, pathname) {
   res.writeHead(200, {
     "Content-Type":
       mimeTypes[path.extname(filePath)] || "application/octet-stream",
-    "Cache-Control": requested.endsWith(".html")
-      ? "no-store"
-      : "public, max-age=300",
+    "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
