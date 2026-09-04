@@ -104,8 +104,9 @@
     const requested = new URLSearchParams(location.search).get("returnTo");
     if (requested && requested.startsWith("/") && !requested.startsWith("//")) {
       location.href = requested;
-    } else if (user.role === "owner") location.href = "owner-dashboard.html";
-    else if (user.role === "agent") location.href = "agent-dashboard.html";
+    } else if (["owner", "super_admin"].includes(user.role)) location.href = "owner-dashboard.html";
+    else if (["agent", "deputy_agent", "assistant_deputy"].includes(user.role))
+      location.href = "agent-dashboard.html";
     else if (user.role === "employee") location.href = "transfers.html";
     else location.href = "index.html";
   }
