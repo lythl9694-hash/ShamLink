@@ -280,6 +280,79 @@
         object-fit: contain;
         background: #fff;
       }
+
+      .rates-table-wrap {
+        overflow-x: auto;
+        border: 1px solid #dbe4ea;
+        border-radius: 14px;
+      }
+
+      .rates-table {
+        width: 100%;
+        min-width: 560px;
+        border-collapse: collapse;
+        text-align: center;
+      }
+
+      .rates-table th,
+      .rates-table td {
+        padding: 12px 10px;
+        border-bottom: 1px solid #e5edf2;
+        border-left: 1px solid #e5edf2;
+      }
+
+      .rates-table th {
+        background: #063f4b;
+        color: #fff;
+      }
+
+      .rates-table td:first-child {
+        font-weight: 700;
+        background: #eef7f8;
+      }
+
+      .rates-note {
+        margin: 10px 0 0;
+        color: #5f6b72;
+        font-size: 14px;
+      }
+
+      .market-controls {
+        display: grid;
+        grid-template-columns: minmax(170px, 1fr) auto auto;
+        gap: 10px;
+        align-items: end;
+        margin-bottom: 14px;
+      }
+
+      .market-controls button { margin: 0; white-space: nowrap; }
+
+      .market-status {
+        margin: 8px 0 14px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: #eef7f8;
+        color: #164d57;
+      }
+
+      .gold-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .gold-item {
+        padding: 14px;
+        text-align: center;
+        border: 1px solid #ead8a4;
+        border-radius: 12px;
+        background: #fff9e8;
+      }
+
+      @media (max-width: 640px) {
+        .market-controls, .gold-grid { grid-template-columns: 1fr; }
+      }
     </style>
   </head>
 
@@ -291,6 +364,34 @@
 
     <div class="container">
       <a class="back" href="index.html"> ← العودة للرئيسية </a>
+
+      <div class="card">
+        <h2>💱 أسعار السوق والعملات والذهب</h2>
+        <div class="market-controls">
+          <div>
+            <label for="marketRegion">المنطقة</label>
+            <select id="marketRegion">
+              <option value="TR">تركيا</option>
+              <option value="SY">سوريا</option>
+              <option value="EU">أوروبا</option>
+              <option value="GLOBAL">السوق العالمي</option>
+            </select>
+          </div>
+          <button id="detectRegion" type="button">تحديد موقعي تلقائياً</button>
+          <button id="refreshMarket" type="button">تحديث الأسعار</button>
+        </div>
+        <div class="market-status" id="marketStatus">جاري تحميل أسعار السوق…</div>
+        <div class="rates-table-wrap">
+          <table class="rates-table" id="ratesTable" aria-label="أسعار صرف العملات مقابل بعضها">
+            <thead>
+              <tr><th>الزوج</th><th>شراء</th><th>بيع</th></tr>
+            </thead>
+            <tbody><tr><td colspan="3">جاري تحميل الأسعار…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="gold-grid" id="goldGrid"></div>
+        <p class="rates-note">الأسعار آلية واستـرشادية من السوق العالمي، ويُحسب فرق الشراء والبيع حسب المنطقة المختارة. السعر المحلي الفعلي قد يختلف، خصوصاً لليرة السورية.</p>
+      </div>
 
       <div class="card">
         <h2>إنشاء حوالة جديدة</h2>
@@ -428,19 +529,37 @@
       const commissionPreview = document.getElementById("commissionPreview");
 
       const defaultCommissionRates = { USD: 0, SYP: 0, TRY: 0, EUR: 0 };
+      let platformSettings = {
+        commission_rates: defaultCommissionRates,
+        exchange_rates: { USD: 1, EUR: 0, TRY: 0, SYP: 0 },
+        sms_validity_hours: 24,
+      };
+      let signedInUser = null;
+      let marketData = null;
+      const marketRegion = document.getElementById("marketRegion");
+
+      async function api(path, options = {}) {
+        const response = await fetch(path, {
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+          ...options,
+        });
+        const data = await response.json().catch(function () { return {}; });
+        if (!response.ok) throw new Error(data.error || "تعذر الاتصال بالخادم.");
+        return data;
+      }
 
       function getSmsValidityHours() {
         return Math.max(
           1,
-          Number(localStorage.getItem("shamlink_sms_validity_hours") || 24),
+          Number(platformSettings.sms_validity_hours || 24),
         );
       }
 
       function getCommissionRates() {
         return {
           ...defaultCommissionRates,
-          ...(JSON.parse(localStorage.getItem("shamlink_commission_rates")) ||
-            {}),
+          ...(platformSettings.commission_rates || {}),
         };
       }
 
@@ -448,6 +567,64 @@
         const rate = Number(getCommissionRates()[currency] || 0);
         const commission = (Number(amount || 0) * rate) / 100;
         return { rate, commission, total: Number(amount || 0) + commission };
+      }
+
+      function renderExchangeRates() {
+        if (!marketData) return;
+        const pairs = [["USD", "TRY"], ["USD", "SYP"], ["EUR", "USD"], ["EUR", "TRY"], ["EUR", "SYP"], ["TRY", "SYP"]];
+        const rates = marketData.rates || {};
+        const spreads = { TR: 0.0035, SY: 0.015, EU: 0.0025, GLOBAL: 0.005 };
+        const spread = spreads[marketRegion.value] || spreads.GLOBAL;
+        const body = document.querySelector("#ratesTable tbody");
+        body.innerHTML = pairs.map(function (pair) {
+          const base = pair[0], target = pair[1];
+          const mid = Number(rates[target] || 0) / Number(rates[base] || 1);
+          const digits = target === "SYP" ? 2 : 4;
+          const buy = mid * (1 - spread);
+          const sell = mid * (1 + spread);
+          return "<tr><td>1 " + base + " / " + target + "</td><td>" + buy.toLocaleString("ar", { maximumFractionDigits: digits }) + "</td><td>" + sell.toLocaleString("ar", { maximumFractionDigits: digits }) + "</td></tr>";
+        }).join("");
+        const localCurrency = marketRegion.value === "TR" ? "TRY" : marketRegion.value === "SY" ? "SYP" : marketRegion.value === "EU" ? "EUR" : "USD";
+        const ounce = Number(marketData.goldUsdPerOunce || 0);
+        const localPerUsd = Number(rates[localCurrency] || 1);
+        const gram24 = ounce / 31.1034768 * localPerUsd;
+        document.getElementById("goldGrid").innerHTML = [24, 21, 18].map(function (karat) {
+          const value = gram24 * karat / 24;
+          return '<div class="gold-item"><strong>ذهب عيار ' + karat + '</strong><br>' + value.toLocaleString("ar", { maximumFractionDigits: 2 }) + ' ' + localCurrency + ' / غرام</div>';
+        }).join("");
+        document.getElementById("marketStatus").textContent = "المنطقة: " + marketRegion.options[marketRegion.selectedIndex].text + " — آخر تحديث: " + new Date(marketData.updatedAt).toLocaleString("ar");
+      }
+
+      async function loadMarketData(force) {
+        const status = document.getElementById("marketStatus");
+        status.textContent = force ? "جاري تحديث الأسعار…" : "جاري تحميل أسعار السوق…";
+        try {
+          marketData = await api("/api/market-rates" + (force ? "?refresh=1" : ""));
+          renderExchangeRates();
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      }
+
+      function detectRegionFromDevice() {
+        const status = document.getElementById("marketStatus");
+        if (!navigator.geolocation) {
+          status.textContent = "جهازك لا يدعم تحديد الموقع. اختر المنطقة يدوياً.";
+          return;
+        }
+        status.textContent = "بانتظار السماح بالوصول إلى الموقع…";
+        navigator.geolocation.getCurrentPosition(function (position) {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+          if (lat >= 32 && lat <= 38.7 && lon >= 35.4 && lon <= 42.5) marketRegion.value = "SY";
+          else if (lat >= 35.5 && lat <= 42.5 && lon >= 25.5 && lon <= 45) marketRegion.value = "TR";
+          else if (lat >= 34 && lat <= 72 && lon >= -25 && lon <= 45) marketRegion.value = "EU";
+          else marketRegion.value = "GLOBAL";
+          localStorage.setItem("shamlink_market_region", marketRegion.value);
+          renderExchangeRates();
+        }, function () {
+          status.textContent = "لم يتم السماح بالموقع. اختر المنطقة يدوياً.";
+        }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 3600000 });
       }
 
       function numberToArabicWords(value) {
@@ -586,8 +763,7 @@
           "</strong>";
       }
 
-      let transfers =
-        JSON.parse(localStorage.getItem("shamlink_transfers")) || [];
+      let transfers = [];
 
       let migratedSmsData = false;
       transfers.forEach(function (transfer) {
@@ -603,7 +779,72 @@
       });
 
       function saveTransfers() {
-        localStorage.setItem("shamlink_transfers", JSON.stringify(transfers));
+        // Transfers are stored centrally by the server.
+      }
+
+      function mapServerTransfer(row) {
+        return {
+          id: row.id,
+          code: row.transfer_number,
+          smsCode: row.sms_code || "لم يُرسل بعد",
+          sender: row.sender_name || "",
+          receiver: row.receiver_name,
+          phone: row.receiver_phone,
+          amount: row.amount,
+          currency: row.currency,
+          commissionRate: row.amount ? (Number(row.commission || 0) / Number(row.amount)) * 100 : 0,
+          commission: row.commission,
+          total: row.total,
+          source: row.source_name,
+          createdBy: row.creator_name,
+          createdByPhone: row.creator_phone,
+          creatorEmployeeId: row.created_by,
+          sourceAgencyId: row.source_agency_id,
+          destination: row.destination_agency_name || row.destination_name,
+          destinationAgencyId: row.destination_agency_id,
+          deliveryAddress: row.delivery_address || "",
+          notes: row.notes || "",
+          status: row.status,
+          date: new Date(row.created_at).toLocaleString("ar"),
+          codeSentAt: row.sms_sent_at ? new Date(row.sms_sent_at).getTime() : null,
+          codeChannel: row.code_channel,
+          smsExpiresAt: row.sms_expires_at ? new Date(row.sms_expires_at).getTime() : null,
+          smsAttempts: Number(row.sms_attempts || 0),
+          smsLocked: Boolean(row.sms_locked),
+          deliveredBy: row.deliverer_name || "",
+          employeeId: row.delivered_by || "",
+          recipientId: row.recipient_id || "",
+          deliveredAt: row.delivered_at ? new Date(row.delivered_at).toLocaleString("ar") : "",
+          agencyLogo: getAgencyLogos()[row.source_name] || "",
+        };
+      }
+
+      async function loadCentralData() {
+        try {
+          const [authData, settingsData, transferData] = await Promise.all([
+            api("/api/auth/status"),
+            api("/api/settings"),
+            api("/api/transfers"),
+          ]);
+          signedInUser = authData.user;
+          platformSettings = { ...platformSettings, ...(settingsData.settings || {}) };
+          transfers = (transferData.transfers || []).map(mapServerTransfer);
+          if (signedInUser) {
+            document.getElementById("createdBy").value = signedInUser.name || "";
+            document.getElementById("createdByPhone").value = signedInUser.phone || "";
+            document.getElementById("createdBy").readOnly = true;
+            document.getElementById("createdByPhone").readOnly = true;
+            if (signedInUser.role !== "owner") {
+              document.getElementById("source").value = signedInUser.agencyName || "";
+              document.getElementById("source").readOnly = true;
+            }
+          }
+          updateCommissionPreview();
+          renderTransfers();
+        } catch (error) {
+          notice.style.display = "block";
+          notice.textContent = error.message;
+        }
       }
 
       function getAgencyLogos() {
@@ -857,10 +1098,14 @@
                         '">تسليم الحوالة</button>' +
                         '<form class="delivery-form" data-code="' +
                         escapeHtml(transfer.code) +
-                        '" autocomplete="off"><label>كود SMS الذي قدّمه المستلم</label><input name="smsCode" inputmode="numeric" maxlength="4" autocomplete="off" required placeholder="أدخل الكود المكوّن من 4 أرقام"><label>اسم الموظف الذي سلّم الحوالة</label><input name="employeeName" autocomplete="off" required placeholder="الاسم الكامل"><label>رقم الموظف</label><input name="employeeId" autocomplete="off" required placeholder="مثال: EMP-001"><label>رقم هوية المستلم</label><input name="recipientId" autocomplete="off" required placeholder="هوية، إقامة أو جواز سفر"><button type="submit">تأكيد التسليم</button><div class="delivery-error"></div></form>') +
+                        '" autocomplete="off"><label>كود SMS الذي قدّمه المستلم</label><input name="smsCode" inputmode="numeric" maxlength="4" autocomplete="off" required placeholder="أدخل الكود المكوّن من 4 أرقام"><div class="commission-box">سيُسجّل التسليم تلقائياً باسم حساب الموظف الحالي ومعرّفه.</div><label>رقم هوية المستلم</label><input name="recipientId" autocomplete="off" required placeholder="هوية، إقامة أو جواز سفر"><button type="submit">تأكيد التسليم</button><div class="delivery-error"></div></form>') +
               '<button class="receipt-button" type="button" data-action="download-receipt" data-code="' +
               escapeHtml(transfer.code) +
-              '">تنزيل الإشعار كصورة</button>';
+              '">تنزيل الإشعار كصورة</button><button class="receipt-button" type="button" data-action="share-receipt-image" data-code="' +
+              escapeHtml(transfer.code) +
+              '">مشاركة كصورة</button><button class="receipt-button" type="button" data-action="share-receipt-pdf" data-code="' +
+              escapeHtml(transfer.code) +
+              '">مشاركة PDF</button>';
 
             transfersList.appendChild(item);
           });
@@ -931,41 +1176,34 @@
 
         const notes = document.getElementById("notes").value.trim();
 
-        const transferCode = Math.floor(100000 + Math.random() * 900000);
+        let created;
+        try {
+          created = await api("/api/transfers", {
+            method: "POST",
+            body: JSON.stringify({
+              sender,
+              receiver,
+              phone,
+              amount: Number(amount),
+              currency,
+              source,
+              sourceAgencyId: signedInUser?.agencyId || sourceAgencyId,
+              destination,
+              deliveryAddress,
+              notes,
+            }),
+          });
+          const transferData = await api("/api/transfers");
+          transfers = (transferData.transfers || []).map(mapServerTransfer);
+        } catch (error) {
+          notice.style.display = "block";
+          notice.textContent = error.message;
+          return;
+        }
 
-        const smsCode = Math.floor(1000 + Math.random() * 9000);
-
-        const transfer = {
-          code: transferCode,
-          smsCode: smsCode,
-          sender: sender,
-          receiver: receiver,
-          phone: phone,
-          amount: amount,
-          currency: currency,
-          commissionRate: commissionResult.rate,
-          commission: commissionResult.commission,
-          total: commissionResult.total,
-          source: source,
-          agencyLogo: agencyLogo,
-          createdBy: createdBy,
-          createdByPhone: createdByPhone,
-          creatorEmployeeId: creatorEmployeeId,
-          sourceAgencyId: sourceAgencyId,
-          destination: destination,
-          deliveryAddress: deliveryAddress,
-          notes: notes,
-          status: "قيد الانتظار",
-          date: new Date().toLocaleString("ar"),
-          codeSentAt: null,
-          codeChannel: null,
-          smsExpiresAt: null,
-          smsAttempts: 0,
-          smsLocked: false,
-        };
-
-        transfers.push(transfer);
-        saveTransfers();
+        const transferCode = created.transferNumber;
+        const transfer = transfers.find(function (item) { return item.id === created.id; });
+        if (!transfer) return;
 
         notice.style.display = "block";
 
@@ -991,14 +1229,16 @@
           "</strong><br>التاريخ: " +
           escapeHtml(transfer.date) +
           "</div>" +
-          '<div class="sms-message">📱 كود الاستلام للموظف: <strong class="owner-secret-code">' +
-          smsCode +
-          "</strong><br>لا يظهر الكود في صورة الإشعار. تبدأ مدة صلاحيته عند إرساله للمستلم، ومدتها " +
+          '<div class="sms-message">📱 كود الاستلام يُنشأ عند اختيار SMS أو واتساب.<br>لا يظهر الكود في صورة الإشعار. تبدأ مدة صلاحيته عند إرساله للمستلم، ومدتها ' +
           getSmsValidityHours() +
           " ساعة، ويسمح بثلاث محاولات فقط.</div>" +
           '<button class="receipt-button" type="button" data-action="download-receipt" data-code="' +
           transferCode +
-          '">تنزيل الإشعار كصورة</button>';
+          '">تنزيل الإشعار كصورة</button><button class="receipt-button" type="button" data-action="share-receipt-image" data-code="' +
+          transferCode +
+          '">مشاركة كصورة</button><button class="receipt-button" type="button" data-action="share-receipt-pdf" data-code="' +
+          transferCode +
+          '">مشاركة PDF</button>';
 
         form.reset();
         updateCommissionPreview();
@@ -1019,6 +1259,22 @@
           return;
         }
 
+        const shareImageButton = event.target.closest(
+          '[data-action="share-receipt-image"]',
+        );
+        if (shareImageButton) {
+          shareReceipt(shareImageButton.dataset.code, "image");
+          return;
+        }
+
+        const sharePdfButton = event.target.closest(
+          '[data-action="share-receipt-pdf"]',
+        );
+        if (sharePdfButton) {
+          shareReceipt(sharePdfButton.dataset.code, "pdf");
+          return;
+        }
+
         const button = event.target.closest('[data-action="open-delivery"]');
         if (!button) return;
 
@@ -1029,7 +1285,7 @@
           deliveryForm.style.display === "block" ? "none" : "block";
       });
 
-      transfersList.addEventListener("submit", function (event) {
+      transfersList.addEventListener("submit", async function (event) {
         const sendCodeForm = event.target.closest(".send-code-form");
         if (sendCodeForm) {
           event.preventDefault();
@@ -1052,7 +1308,16 @@
             return;
           }
 
-          sendPickupCode(transfer.code, sendCodeForm.elements.channel.value);
+          try {
+            await sendPickupCode(
+              transfer.code,
+              sendCodeForm.elements.channel.value,
+              sendCodeForm.elements.recipientPhone.value,
+            );
+          } catch (apiError) {
+            error.textContent = apiError.message;
+            error.style.display = "block";
+          }
           return;
         }
 
@@ -1067,91 +1332,44 @@
 
         if (!transfer) return;
 
-        if (isSmsExpired(transfer)) {
-          renderTransfers(searchInput.value);
-          return;
-        }
-
-        if (enteredCode !== String(transfer.smsCode)) {
-          transfer.smsAttempts = Number(transfer.smsAttempts || 0) + 1;
-          const remainingAttempts = Math.max(0, 3 - transfer.smsAttempts);
-          transfer.auditLog = transfer.auditLog || [];
-          transfer.auditLog.push({
-            action: "محاولة تسليم فاشلة",
-            date: new Date().toLocaleString("ar"),
+        const error = deliveryForm.querySelector(".delivery-error");
+        try {
+          await api("/api/transfers/" + encodeURIComponent(transfer.id) + "/deliver", {
+            method: "POST",
+            body: JSON.stringify({
+              smsCode: enteredCode,
+              recipientId: deliveryForm.elements.recipientId.value.trim(),
+            }),
           });
-
-          if (remainingAttempts === 0) {
-            transfer.smsLocked = true;
-            saveTransfers();
-            renderTransfers(searchInput.value);
-            return;
-          }
-
-          saveTransfers();
-          const error = deliveryForm.querySelector(".delivery-error");
-          error.textContent =
-            "كود غير صحيح. المحاولات المتبقية: " + remainingAttempts;
+          const transferData = await api("/api/transfers");
+          transfers = (transferData.transfers || []).map(mapServerTransfer);
+          renderTransfers(searchInput.value);
+        } catch (apiError) {
+          error.textContent = apiError.message;
           error.style.display = "block";
-          return;
+          const transferData = await api("/api/transfers").catch(function () { return null; });
+          if (transferData) transfers = (transferData.transfers || []).map(mapServerTransfer);
         }
-
-        transfer.status = "تم التسليم";
-        transfer.deliveredBy = deliveryForm.elements.employeeName.value.trim();
-        transfer.employeeId = deliveryForm.elements.employeeId.value.trim();
-        transfer.recipientId = deliveryForm.elements.recipientId.value.trim();
-        transfer.deliveredAt = new Date().toLocaleString("ar");
-        transfer.smsAttempts = 0;
-        transfer.auditLog = transfer.auditLog || [];
-        transfer.auditLog.push({
-          action: "تسليم الحوالة",
-          employeeName: transfer.deliveredBy,
-          employeeId: transfer.employeeId,
-          recipientId: transfer.recipientId,
-          date: transfer.deliveredAt,
-        });
-
-        const agencies = JSON.parse(
-          localStorage.getItem("shamlink_agency_profiles") || "{}",
-        );
-        const destinationAgency = Object.values(agencies).find(
-          (agency) =>
-            String(agency.name).trim().toLowerCase() ===
-            String(transfer.destination).trim().toLowerCase(),
-        );
-        saveEmployeeProfile(
-          transfer.employeeId,
-          transfer.deliveredBy,
-          "",
-          destinationAgency?.id || "",
-        );
-
-        saveTransfers();
-        renderTransfers(searchInput.value);
       });
 
-      function sendPickupCode(transferCode, channel) {
+      async function sendPickupCode(transferCode, channel, recipientPhone) {
         const transfer = transfers.find(
           (item) => String(item.code) === String(transferCode),
         );
         if (!transfer || transfer.status === "تم التسليم") return;
-
-        transfer.smsCode = Math.floor(1000 + Math.random() * 9000);
+        const sent = await api(
+          "/api/transfers/" + encodeURIComponent(transfer.id) + "/send-code",
+          {
+            method: "POST",
+            body: JSON.stringify({ recipientPhone, channel }),
+          },
+        );
+        transfer.smsCode = sent.code;
         transfer.codeSentAt = Date.now();
         transfer.codeChannel = channel;
-        transfer.smsExpiresAt =
-          Date.now() + getSmsValidityHours() * 60 * 60 * 1000;
+        transfer.smsExpiresAt = new Date(sent.expiresAt).getTime();
         transfer.smsAttempts = 0;
         transfer.smsLocked = false;
-        transfer.auditLog = transfer.auditLog || [];
-        transfer.auditLog.push({
-          action:
-            channel === "whatsapp"
-              ? "إرسال كود الاستلام عبر واتساب"
-              : "إرسال كود الاستلام عبر SMS",
-          date: new Date().toLocaleString("ar"),
-        });
-        saveTransfers();
 
         const message =
           "شام لينك: كود استلام الحوالة رقم " +
@@ -1159,7 +1377,7 @@
           " هو " +
           transfer.smsCode +
           ". صالح لمدة " +
-          getSmsValidityHours() +
+          sent.validityHours +
           " ساعة. لا تشارك الكود مع أي شخص قبل استلام حوالتك.";
 
         renderTransfers(searchInput.value);
@@ -1178,11 +1396,11 @@
           "sms:" + transfer.phone + "?body=" + encodeURIComponent(message);
       }
 
-      async function downloadReceipt(transferCode) {
+      async function createReceiptCanvas(transferCode) {
         const transfer = transfers.find(
           (item) => String(item.code) === String(transferCode),
         );
-        if (!transfer) return;
+        if (!transfer) return null;
 
         const canvas = document.createElement("canvas");
         canvas.width = 1600;
@@ -1378,16 +1596,127 @@
           1040,
         );
 
+        return canvas;
+      }
+
+      function canvasBlob(canvas, type, quality) {
+        return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+      }
+
+      function downloadBlob(blob, filename) {
         const link = document.createElement("a");
-        link.download = "ShamLink-" + transfer.code + ".png";
-        link.href = canvas.toDataURL("image/png");
+        const url = URL.createObjectURL(blob);
+        link.download = filename;
+        link.href = url;
         link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      function createPdfFromJpeg(jpegBytes, width, height) {
+        const encoder = new TextEncoder();
+        const parts = [];
+        let length = 0;
+        const offsets = [0];
+        function append(value) {
+          const bytes =
+            typeof value === "string" ? encoder.encode(value) : value;
+          parts.push(bytes);
+          length += bytes.length;
+        }
+        function object(number, content) {
+          offsets[number] = length;
+          append(number + " 0 obj\n" + content + "\nendobj\n");
+        }
+        append("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+        object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+        object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+        object(
+          3,
+          "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 800 550] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>",
+        );
+        offsets[4] = length;
+        append(
+          "4 0 obj\n<< /Type /XObject /Subtype /Image /Width " +
+            width +
+            " /Height " +
+            height +
+            " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " +
+            jpegBytes.length +
+            " >>\nstream\n",
+        );
+        append(jpegBytes);
+        append("\nendstream\nendobj\n");
+        const drawing = "q\n800 0 0 550 0 0 cm\n/Im0 Do\nQ";
+        object(
+          5,
+          "<< /Length " +
+            drawing.length +
+            " >>\nstream\n" +
+            drawing +
+            "\nendstream",
+        );
+        const xref = length;
+        append("xref\n0 6\n0000000000 65535 f \n");
+        for (let index = 1; index <= 5; index += 1) {
+          append(String(offsets[index]).padStart(10, "0") + " 00000 n \n");
+        }
+        append(
+          "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF",
+        );
+        return new Blob(parts, { type: "application/pdf" });
+      }
+
+      async function downloadReceipt(transferCode) {
+        const canvas = await createReceiptCanvas(transferCode);
+        if (!canvas) return;
+        const blob = await canvasBlob(canvas, "image/png");
+        downloadBlob(blob, "ShamLink-" + transferCode + ".png");
+      }
+
+      async function shareReceipt(transferCode, format) {
+        const canvas = await createReceiptCanvas(transferCode);
+        if (!canvas) return;
+        let blob;
+        let filename;
+        if (format === "pdf") {
+          const jpeg = await canvasBlob(canvas, "image/jpeg", 0.92);
+          blob = createPdfFromJpeg(
+            new Uint8Array(await jpeg.arrayBuffer()),
+            canvas.width,
+            canvas.height,
+          );
+          filename = "ShamLink-" + transferCode + ".pdf";
+        } else {
+          blob = await canvasBlob(canvas, "image/png");
+          filename = "ShamLink-" + transferCode + ".png";
+        }
+        const file = new File([blob], filename, { type: blob.type });
+        if (navigator.share && navigator.canShare?.({ files: [file] })) {
+          try {
+            await navigator.share({
+              files: [file],
+              title: "إشعار حوالة شام لينك",
+            });
+            return;
+          } catch (error) {
+            if (error.name === "AbortError") return;
+          }
+        }
+        downloadBlob(blob, filename);
       }
 
       amountInput.addEventListener("input", updateCommissionPreview);
       currencyInput.addEventListener("change", updateCommissionPreview);
+      marketRegion.value = localStorage.getItem("shamlink_market_region") || "TR";
+      marketRegion.addEventListener("change", function () {
+        localStorage.setItem("shamlink_market_region", marketRegion.value);
+        renderExchangeRates();
+      });
+      document.getElementById("detectRegion").addEventListener("click", detectRegionFromDevice);
+      document.getElementById("refreshMarket").addEventListener("click", function () { loadMarketData(true); });
 
-      renderTransfers();
+      loadCentralData();
+      loadMarketData(false);
     </script>
   </body>
 </html>
