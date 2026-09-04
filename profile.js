@@ -35,20 +35,21 @@
 
   function resizePhoto(file) {
     return new Promise((resolve, reject) => {
-      if (!file.type.match(/^image\/(jpeg|png|webp)$/)) return reject(new Error("اختر صورة بصيغة JPG أو PNG أو WebP."));
+      if (!file || (!file.type.match(/^image\/(jpeg|png|webp)$/) && !file.name.match(/\.(jpe?g|png|webp)$/i))) return reject(new Error("اختر صورة بصيغة JPG أو PNG أو WebP."));
       const image = new Image();
-      const url = URL.createObjectURL(file);
       image.onload = () => {
         const size = 512;
         const canvas = document.createElement("canvas"); canvas.width = size; canvas.height = size;
         const context = canvas.getContext("2d");
         const side = Math.min(image.width, image.height); const sx = (image.width - side) / 2; const sy = (image.height - side) / 2;
         context.drawImage(image, sx, sy, side, side, 0, 0, size, size);
-        URL.revokeObjectURL(url);
         resolve(canvas.toDataURL("image/jpeg", 0.78));
       };
-      image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("تعذر قراءة الصورة.")); };
-      image.src = url;
+      image.onerror = () => reject(new Error("تعذر قراءة هذه الصورة. جرّب اختيار لقطة شاشة للصورة."));
+      const reader = new FileReader();
+      reader.onload = () => { image.src = reader.result; };
+      reader.onerror = () => reject(new Error("تعذر فتح الصورة من معرض الجوال."));
+      reader.readAsDataURL(file);
     });
   }
 
