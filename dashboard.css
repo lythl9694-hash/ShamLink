@@ -294,6 +294,31 @@ button {
   text-decoration: none;
 }
 
+.liquidity-form {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+.liquidity-form .wide { grid-column: span 3; }
+.balance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+.balance-card {
+  padding: 14px;
+  border: 1px solid #bfe3d5;
+  border-radius: 12px;
+  background: #f0fdf8;
+}
+.balance-card strong { display: block; color: #056747; font-size: 22px; margin-top: 6px; }
+.ledger-list { display: grid; gap: 8px; }
+.ledger-row { padding: 11px; border: 1px solid #e2e8f0; border-radius: 9px; line-height: 1.7; }
+.ledger-positive { color: #057a55; font-weight: bold; }
+.ledger-negative { color: #b91c1c; font-weight: bold; }
+
 @media (max-width: 760px) {
   .stats {
     grid-template-columns: 1fr 1fr;
@@ -304,6 +329,9 @@ button {
   .send-code-actions {
     grid-template-columns: 1fr;
   }
+
+  .liquidity-form { grid-template-columns: 1fr 1fr; }
+  .liquidity-form .wide { grid-column: span 2; }
 
   .header-inner,
   .detail-header {
