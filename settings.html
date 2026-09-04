@@ -164,6 +164,7 @@
               required
             />
           </div>
+          <p class="hint">أسعار العملات والذهب تُحدّث تلقائياً من السوق وليست ضمن إعدادات صاحب المنصة.</p>
           <button type="submit">حفظ الإعدادات</button>
         </form>
         <div class="notice" id="notice">تم حفظ الإعدادات بنجاح ✅</div>
@@ -173,18 +174,20 @@
       const currencies = ["USD", "SYP", "TRY", "EUR"];
       const form = document.getElementById("commissionForm");
       const notice = document.getElementById("notice");
-      const savedRates =
-        JSON.parse(localStorage.getItem("shamlink_commission_rates")) || {};
       const smsValidityInput = document.getElementById("smsValidityHours");
-      smsValidityInput.value = Number(
-        localStorage.getItem("shamlink_sms_validity_hours") || 24,
-      );
-      currencies.forEach((currency) => {
-        document.getElementById(currency).value = Number(
-          savedRates[currency] || 0,
-        );
-      });
-      form.addEventListener("submit", (event) => {
+      async function loadSettings() {
+        const response = await fetch("/api/settings");
+        const data = await response.json();
+        if (!response.ok)
+          throw new Error(data.error || "تعذر تحميل الإعدادات.");
+        currencies.forEach((currency) => {
+          document.getElementById(currency).value = Number(
+            data.settings.commission_rates?.[currency] || 0,
+          );
+        });
+        smsValidityInput.value = Number(data.settings.sms_validity_hours || 24);
+      }
+      form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const rates = {};
         currencies.forEach((currency) => {
@@ -193,16 +196,19 @@
             Number(document.getElementById(currency).value || 0),
           );
         });
-        localStorage.setItem(
-          "shamlink_commission_rates",
-          JSON.stringify(rates),
-        );
-        localStorage.setItem(
-          "shamlink_sms_validity_hours",
-          String(Math.max(1, Number(smsValidityInput.value || 24))),
-        );
+        const response = await fetch("/api/owner/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            commissionRates: rates,
+            smsValidityHours: Number(smsValidityInput.value || 24),
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) return alert(data.error || "تعذر حفظ الإعدادات.");
         notice.style.display = "block";
       });
+      loadSettings().catch((error) => alert(error.message));
     </script>
   </body>
 </html>
